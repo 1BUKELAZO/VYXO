@@ -1,0 +1,2 @@
+-- This migration is a no-op because music_name column was already included in the initial videos table schema
+-- and has been removed from the current schema

@@ -1,0 +1,153 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1770467228229,
+      "tag": "20260207122708_chubby_tyrannus",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1770468501091,
+      "tag": "20260207124821_rich_tyrannus",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1770636579170,
+      "tag": "20260209112939_sparkling_tusk",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1770636707231,
+      "tag": "20260209113147_sturdy_rawhide_kid",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1770729840337,
+      "tag": "20260210132400_dashing_echo",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1770734715646,
+      "tag": "20260210144515_yielding_tigra",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1770809407613,
+      "tag": "20260211113007_shiny_captain_midlands",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1770812397407,
+      "tag": "20260211121957_modern_toxin",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1770829791194,
+      "tag": "20260211170951_mixed_darkhawk",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1770872586400,
+      "tag": "20260212050306_slim_ultimo",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1770873435394,
+      "tag": "20260212051715_charming_screwball",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1770874087712,
+      "tag": "20260212052807_little_scorpion",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1770875958363,
+      "tag": "20260212055918_panoramic_exodus",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1770877133697,
+      "tag": "20260212061853_tough_susan_delgado",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1770877952550,
+      "tag": "20260212063232_cold_goliath",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1770879858212,
+      "tag": "20260212070418_minor_bucky",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1770881299138,
+      "tag": "20260212072819_supreme_firelord",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1770882085891,
+      "tag": "20260212074125_fancy_centennial",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1770882800491,
+      "tag": "20260212075320_shocking_maximus",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1770885465683,
+      "tag": "20260212083745_condemned_kinsey_walden",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1770886765849,
+      "tag": "20260212085925_breezy_nehzno",
+      "breakpoints": true
+    }
+  ]
+}
