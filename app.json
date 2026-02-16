@@ -85,7 +85,8 @@
     },
     "extra": {
       "router": {},
-      "backendUrl": "https://2zrr473wqw4kppdhxncb65tkzxvzqnk3.app.specular.dev",
+      "backendUrl": "https://vyxo-backend.onrender.com",
+      "authUrl": "https://vyxo-backend.onrender.com",
       "eas": {
         "projectId": "4b8ae3db-bca6-4d0d-9a23-11b3ad134d46"
       }
