@@ -1,4 +1,3 @@
-S
 {
   "cli": {
     "version": ">= 3.13.0"
@@ -14,19 +13,17 @@ S
         "buildType": "apk"
       }
     },
-      "preview": {
-  "distribution": "internal",
-  "env": {
-    "BACKEND_URL": "https://vyxo-backend.onrender.com",
-    "AUTH_URL": "https://vyxo-backend.onrender.com"
-  },
-  "ios": {
-    "simulator": false
-  },
-  "android": {
-    "buildType": "apk"
-  }
-},
+    "preview": {
+      "distribution": "internal",
+      "env": {
+        "BACKEND_URL": "https://vyxo-backend.onrender.com",
+        "AUTH_URL": "https://vyxo-backend.onrender.com"
+      },
+      "ios": {
+        "simulator": false
+      },
+      "android": {
+        "buildType": "apk"
       }
     },
     "production": {
