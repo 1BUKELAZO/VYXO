@@ -7,7 +7,7 @@ import { BEARER_TOKEN_KEY } from "@/lib/auth";
  * Backend URL is configured in app.json under expo.extra.backendUrl
  * It is set automatically when the backend is deployed
  */
-export const BACKEND_URL = Constants.expoConfig?.extra?.backendUrl || "";
+export const BACKEND_URL = "https://vyxo-backend.onrender.com";
 
 /**
  * Check if backend is properly configured
