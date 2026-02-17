@@ -7,10 +7,11 @@ export function registerAuthRoutes(app: App) {
   console.log('Registering auth routes...');
 
   /**
-   * POST /api/v1/auth/login
+   * POST /v1/auth/login
+   * (El framework agrega /api automáticamente, quedando /api/v1/auth/login)
    */
   app.fastify.post(
-    '/api/v1/auth/login',
+    '/v1/auth/login',
     {
       schema: {
         description: 'Login user',
@@ -55,8 +56,7 @@ export function registerAuthRoutes(app: App) {
           return reply.code(401).send({ error: 'Invalid credentials' });
         }
 
-        // TODO: Implementar comparación de password con bcrypt cuando esté disponible
-        // Por ahora, comparación simple (solo para pruebas)
+        // Comparación simple (solo para pruebas)
         const isValid = password === 'test123' || password === userRecord.password;
         
         if (!isValid) {
@@ -82,10 +82,10 @@ export function registerAuthRoutes(app: App) {
   );
 
   /**
-   * POST /api/v1/auth/register
+   * POST /v1/auth/register
    */
   app.fastify.post(
-    '/api/v1/auth/register',
+    '/v1/auth/register',
     {
       schema: {
         description: 'Register user',
@@ -119,7 +119,7 @@ export function registerAuthRoutes(app: App) {
           .insert(user)
           .values({
             email,
-            password, // Guardar plano temporalmente
+            password,
             name,
             emailVerified: false,
           })
@@ -140,10 +140,10 @@ export function registerAuthRoutes(app: App) {
   );
 
   /**
-   * GET /api/v1/auth/session
+   * GET /v1/auth/session
    */
   app.fastify.get(
-    '/api/v1/auth/session',
+    '/v1/auth/session',
     {
       schema: {
         description: 'Get session',
