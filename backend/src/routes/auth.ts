@@ -7,10 +7,10 @@ export function registerAuthRoutes(app: App) {
   console.log('Registering auth routes...');
 
   /**
-   * POST /api/auth/login
+   * POST /api/v1/auth/login
    */
   app.fastify.post(
-    '/api/auth/login',
+    '/api/v1/auth/login',
     {
       schema: {
         description: 'Login user',
@@ -82,10 +82,10 @@ export function registerAuthRoutes(app: App) {
   );
 
   /**
-   * POST /api/auth/register
+   * POST /api/v1/auth/register
    */
   app.fastify.post(
-    '/api/auth/register',
+    '/api/v1/auth/register',
     {
       schema: {
         description: 'Register user',
@@ -140,10 +140,10 @@ export function registerAuthRoutes(app: App) {
   );
 
   /**
-   * GET /api/auth/session
+   * GET /api/v1/auth/session
    */
   app.fastify.get(
-    '/api/auth/session',
+    '/api/v1/auth/session',
     {
       schema: {
         description: 'Get session',
