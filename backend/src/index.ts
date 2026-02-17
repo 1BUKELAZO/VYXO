@@ -22,7 +22,7 @@ import { registerSubscriptionRoutes } from './routes/subscriptions.js';
 import { registerAdRoutes } from './routes/ads.js';
 import { registerAnalyticsRoutes } from './routes/analytics.js';
 import { registerAdminRoutes } from './routes/admin.js';
-
+import { registerAuthRoutes } from './routes/auth.js';
 // Merge app and auth schemas
 const schema = { ...appSchema, ...authSchema };
 
@@ -34,6 +34,7 @@ export type App = typeof app;
 
 // Initialize authentication
 app.withAuth();
+registerAuthRoutes(app);
 
 // Initialize storage
 app.withStorage();
