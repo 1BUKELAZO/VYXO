@@ -4,7 +4,7 @@ import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
 import Constants from "expo-constants";
 
-const API_URL = Constants.expoConfig?.extra?.backendUrl || "";
+const API_URL = "https://vyxo-backend.onrender.com";
 
 export const BEARER_TOKEN_KEY = "vyxo_bearer_token";
 
