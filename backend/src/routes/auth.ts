@@ -1,6 +1,7 @@
 import type { App } from '../index.js';
 
 export function registerAuthRoutes(app: App) {
+  console.log('Registering auth routes...');
   // Endpoint de login
   app.fastify.post('/api/auth/login', async (request: any, reply: any) => {
     try {
