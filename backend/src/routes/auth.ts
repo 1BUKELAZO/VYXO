@@ -1,12 +1,11 @@
-import { app } from '../index.js';
+import type { App } from '../index.js';
 
-export function registerAuthRoutes(app: any) {
+export function registerAuthRoutes(app: App) {
   // Endpoint de login
-  app.post('/api/auth/login', async (request: any, reply: any) => {
+  app.fastify.post('/api/auth/login', async (request: any, reply: any) => {
     try {
       const { email, password } = request.body;
       
-      // Usar Better Auth interno del framework
       const result = await app.auth.signIn.email({
         email,
         password
@@ -19,7 +18,7 @@ export function registerAuthRoutes(app: any) {
   });
 
   // Endpoint de registro
-  app.post('/api/auth/register', async (request: any, reply: any) => {
+  app.fastify.post('/api/auth/register', async (request: any, reply: any) => {
     try {
       const { email, password, name } = request.body;
       
@@ -35,8 +34,8 @@ export function registerAuthRoutes(app: any) {
     }
   });
 
-  // Endpoint de sesión actual
-  app.get('/api/auth/session', async (request: any, reply: any) => {
+  // Endpoint de sesión
+  app.fastify.get('/api/auth/session', async (request: any, reply: any) => {
     try {
       const session = await app.auth.getSession(request);
       return reply.send(session);
