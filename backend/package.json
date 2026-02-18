@@ -20,6 +20,7 @@
     "@neondatabase/serverless": "^1.0.2",
     "@fastify/websocket": "^11.2.0",
     "@specific-dev/framework": "1.25.2",
+    "bcrypt": "^5.1.1",
     "better-auth": "1.4.5",
     "commander": "^12.1.0",
     "drizzle-orm": "^0.44.7",
@@ -29,6 +30,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.13.5",
+    "@types/bcrypt": "^5.0.2",
     "drizzle-kit": "^0.31.5",
     "esbuild": "^0.27.0",
     "tsx": "^4.19.2",

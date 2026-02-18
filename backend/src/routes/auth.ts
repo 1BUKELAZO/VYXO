@@ -2,9 +2,7 @@ import type { App } from '../index.js';
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import { user } from '../db/auth-schema.js';
 import { eq } from 'drizzle-orm';
-
-// Import bcrypt - usando require para compatibilidad con instalación global
-const bcrypt = require('bcrypt');
+import bcrypt from 'bcrypt';
 
 export function registerAuthRoutes(app: App) {
   console.log('Registering auth routes...');
