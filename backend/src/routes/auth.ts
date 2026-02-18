@@ -3,6 +3,9 @@ import type { FastifyRequest, FastifyReply } from 'fastify';
 import { user } from '../db/auth-schema.js';
 import { eq } from 'drizzle-orm';
 
+// Import bcrypt - usando require para compatibilidad con instalación global
+const bcrypt = require('bcrypt');
+
 export function registerAuthRoutes(app: App) {
   console.log('Registering auth routes...');
 
@@ -54,7 +57,8 @@ export function registerAuthRoutes(app: App) {
           return reply.code(401).send({ error: 'Invalid credentials' });
         }
 
-        const isValid = password === userRecord.password;
+        // Comparar contraseña usando bcrypt
+        const isValid = await bcrypt.compare(password, userRecord.password);
         
         if (!isValid) {
           return reply.code(401).send({ error: 'Invalid credentials' });
@@ -120,12 +124,15 @@ export function registerAuthRoutes(app: App) {
 
         const userId = generateUUID();
 
+        // Hashear la contraseña antes de guardar
+        const hashedPassword = await bcrypt.hash(password, 10);
+
         const [newUser] = await app.db
           .insert(user)
           .values({
             id: userId,
             email,
-            password,
+            password: hashedPassword,
             name,
             emailVerified: false,
             role: 'user',
