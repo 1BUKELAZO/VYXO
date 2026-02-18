@@ -6,7 +6,8 @@ export const user = pgTable("user", {
   email: text("email").notNull().unique(),
   emailVerified: boolean("email_verified").default(false).notNull(),
   image: text("image"),
-  role: text("role").default("user").notNull(), // 'user', 'admin', 'moderator'
+  password: text("password"), // ← AGREGADO
+  role: text("role").default("user").notNull(),
   isBanned: boolean("is_banned").default(false).notNull(),
   bannedAt: timestamp("banned_at", { withTimezone: true }),
   bannedBy: text("banned_by").references(() => user.id, { onDelete: "set null" }),
