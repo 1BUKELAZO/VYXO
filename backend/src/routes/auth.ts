@@ -192,6 +192,158 @@ export function registerAuthRoutes(app: App) {
   );
 
   /**
+   * GET /api/auth/me
+   * Get current user profile
+   * Requires authentication
+   */
+  app.fastify.get(
+    '/api/auth/me',
+    {
+      schema: {
+        description: 'Get current user profile',
+        tags: ['auth'],
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              id: { type: 'string' },
+              email: { type: 'string' },
+              name: { type: 'string' },
+              image: { type: 'string' },
+              role: { type: 'string' },
+              emailVerified: { type: 'boolean' },
+              createdAt: { type: 'string' },
+            },
+          },
+        },
+      },
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      try {
+        const requireAuth = app.requireAuth();
+        const session = await requireAuth(request, reply);
+        if (!session) return;
+
+        const userId = session.user.id;
+
+        const userRecord = await app.db.query.user.findFirst({
+          where: eq(user.id, userId),
+        });
+
+        if (!userRecord) {
+          return reply.code(404).send({ error: 'User not found' });
+        }
+
+        return {
+          id: userRecord.id,
+          email: userRecord.email,
+          name: userRecord.name,
+          image: userRecord.image,
+          role: userRecord.role,
+          emailVerified: userRecord.emailVerified,
+          createdAt: userRecord.createdAt,
+        };
+      } catch (error) {
+        app.logger.error({ err: error }, 'Get profile error');
+        throw error;
+      }
+    }
+  );
+
+  /**
+   * PUT /api/auth/profile
+   * Update current user profile
+   * Requires authentication
+   */
+  app.fastify.put(
+    '/api/auth/profile',
+    {
+      schema: {
+        description: 'Update current user profile',
+        tags: ['auth'],
+        body: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', minLength: 2, maxLength: 50 },
+            image: { type: 'string' },
+          },
+        },
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              id: { type: 'string' },
+              email: { type: 'string' },
+              name: { type: 'string' },
+              image: { type: 'string' },
+              updatedAt: { type: 'string' },
+            },
+          },
+        },
+      },
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      try {
+        const requireAuth = app.requireAuth();
+        const session = await requireAuth(request, reply);
+        if (!session) return;
+
+        const userId = session.user.id;
+        const { name, image } = request.body as { name?: string; image?: string };
+
+        // Validar y sanitizar nombre si se proporciona
+        let sanitizedName: string | undefined;
+        if (name !== undefined) {
+          if (!isValidLength(name, 2, 50)) {
+            return reply.code(400).send({ 
+              error: 'Invalid name',
+              message: 'Name must be between 2 and 50 characters'
+            });
+          }
+          sanitizedName = sanitizeString(name.trim());
+        }
+
+        // Preparar datos de actualización
+        const updateData: any = {
+          updatedAt: new Date(),
+        };
+        
+        if (sanitizedName !== undefined) updateData.name = sanitizedName;
+        if (image !== undefined) updateData.image = image;
+
+        // Si no hay nada que actualizar
+        if (Object.keys(updateData).length === 1) { // Solo updatedAt
+          return reply.code(400).send({ 
+            error: 'No data provided',
+            message: 'Please provide name or image to update'
+          });
+        }
+
+        const [updatedUser] = await app.db
+          .update(user)
+          .set(updateData)
+          .where(eq(user.id, userId))
+          .returning();
+
+        if (!updatedUser) {
+          return reply.code(404).send({ error: 'User not found' });
+        }
+
+        return {
+          id: updatedUser.id,
+          email: updatedUser.email,
+          name: updatedUser.name,
+          image: updatedUser.image,
+          updatedAt: updatedUser.updatedAt,
+        };
+      } catch (error) {
+        app.logger.error({ err: error }, 'Update profile error');
+        throw error;
+      }
+    }
+  );
+
+  /**
    * GET /api/auth/session
    */
   app.fastify.get(
