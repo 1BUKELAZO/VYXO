@@ -220,29 +220,54 @@ export function registerAuthRoutes(app: App) {
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       try {
-        const requireAuth = app.requireAuth();
-        const session = await requireAuth(request, reply);
-        if (!session) return;
-
-        const userId = session.user.id;
-
-        const userRecord = await app.db.query.user.findFirst({
-          where: eq(user.id, userId),
-        });
-
-        if (!userRecord) {
-          return reply.code(404).send({ error: 'User not found' });
+        // Obtener token del header manualmente
+        const authHeader = request.headers.authorization;
+        
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+          return reply.code(401).send({ error: 'Unauthorized', message: 'Token no proporcionado' });
         }
 
-        return {
-          id: userRecord.id,
-          email: userRecord.email,
-          name: userRecord.name,
-          image: userRecord.image,
-          role: userRecord.role,
-          emailVerified: userRecord.emailVerified,
-          createdAt: userRecord.createdAt,
-        };
+        const token = authHeader.substring(7);
+        
+        // Decodificar token (base64)
+        try {
+          const decoded = Buffer.from(token, 'base64').toString('utf-8');
+          const [userId, timestamp] = decoded.split(':');
+          
+          if (!userId || !timestamp) {
+            return reply.code(401).send({ error: 'Unauthorized', message: 'Token inválido' });
+          }
+
+          // Verificar si el token expiró (24 horas)
+          const tokenTime = parseInt(timestamp);
+          const now = Math.floor(Date.now() / 1000);
+          const oneDay = 24 * 60 * 60;
+          
+          if (now - tokenTime > oneDay) {
+            return reply.code(401).send({ error: 'Unauthorized', message: 'Token expirado' });
+          }
+
+          // Buscar usuario
+          const userRecord = await app.db.query.user.findFirst({
+            where: eq(user.id, userId),
+          });
+
+          if (!userRecord) {
+            return reply.code(404).send({ error: 'User not found' });
+          }
+
+          return {
+            id: userRecord.id,
+            email: userRecord.email,
+            name: userRecord.name,
+            image: userRecord.image,
+            role: userRecord.role,
+            emailVerified: userRecord.emailVerified,
+            createdAt: userRecord.createdAt,
+          };
+        } catch (error) {
+          return reply.code(401).send({ error: 'Unauthorized', message: 'Token inválido' });
+        }
       } catch (error) {
         app.logger.error({ err: error }, 'Get profile error');
         throw error;
@@ -284,11 +309,39 @@ export function registerAuthRoutes(app: App) {
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       try {
-        const requireAuth = app.requireAuth();
-        const session = await requireAuth(request, reply);
-        if (!session) return;
+        // Obtener token del header manualmente
+        const authHeader = request.headers.authorization;
+        
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+          return reply.code(401).send({ error: 'Unauthorized', message: 'Token no proporcionado' });
+        }
 
-        const userId = session.user.id;
+        const token = authHeader.substring(7);
+        
+        // Decodificar token (base64)
+        let userId: string;
+        try {
+          const decoded = Buffer.from(token, 'base64').toString('utf-8');
+          const [id, timestamp] = decoded.split(':');
+          
+          if (!id || !timestamp) {
+            return reply.code(401).send({ error: 'Unauthorized', message: 'Token inválido' });
+          }
+
+          // Verificar si el token expiró (24 horas)
+          const tokenTime = parseInt(timestamp);
+          const now = Math.floor(Date.now() / 1000);
+          const oneDay = 24 * 60 * 60;
+          
+          if (now - tokenTime > oneDay) {
+            return reply.code(401).send({ error: 'Unauthorized', message: 'Token expirado' });
+          }
+          
+          userId = id;
+        } catch (error) {
+          return reply.code(401).send({ error: 'Unauthorized', message: 'Token inválido' });
+        }
+
         const { name, image } = request.body as { name?: string; image?: string };
 
         // Validar y sanitizar nombre si se proporciona
