@@ -1,4 +1,3 @@
-import type { App } from '../index.js';
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import { eq, desc, and, not, isNull, inArray, sql } from 'drizzle-orm';
 import * as schema from '../db/schema.js';
