@@ -1,4 +1,5 @@
 import { createApplication } from "@specific-dev/framework";
+import { sql } from "drizzle-orm";
 import * as appSchema from './db/schema.js';
 import * as authSchema from './db/auth-schema.js';
 import { registerVideoRoutes } from './routes/videos.js';
@@ -23,6 +24,7 @@ import { registerAdRoutes } from './routes/ads.js';
 import { registerAnalyticsRoutes } from './routes/analytics.js';
 import { registerAdminRoutes } from './routes/admin.js';
 import { registerAuthRoutes } from './routes/auth.js';
+
 // Merge app and auth schemas
 const schema = { ...appSchema, ...authSchema };
 
@@ -31,6 +33,38 @@ export const app = await createApplication(schema);
 
 // Export App type for use in route files
 export type App = typeof app;
+
+// 🚀 VERIFICACIÓN DE COLUMNA PASSWORD ANTES DE INICIAR AUTH
+async function ensurePasswordColumn() {
+  try {
+    console.log('🔍 Verificando columna password en tabla user...');
+    
+    const result = await app.db.execute(sql`
+      SELECT column_name 
+      FROM information_schema.columns 
+      WHERE table_name = 'user' 
+      AND column_name = 'password'
+      AND table_schema = 'public'
+    `);
+    
+    if (result.rows.length === 0) {
+      console.log('⚠️  Columna password no encontrada. Ejecutando ALTER TABLE...');
+      await app.db.execute(sql`
+        ALTER TABLE "user" 
+        ADD COLUMN IF NOT EXISTS "password" text
+      `);
+      console.log('✅ Columna password creada exitosamente');
+    } else {
+      console.log('✅ Columna password ya existe');
+    }
+  } catch (error) {
+    console.error('❌ Error al verificar/crear columna password:', error);
+    // No lanzamos error para no bloquear el inicio
+  }
+}
+
+// Ejecutar verificación antes de inicializar auth
+await ensurePasswordColumn();
 
 // Initialize authentication
 app.withAuth();
