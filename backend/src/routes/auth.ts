@@ -3,6 +3,7 @@ import type { FastifyRequest, FastifyReply } from 'fastify';
 import { user } from '../db/auth-schema.js';
 import { eq } from 'drizzle-orm';
 import bcrypt from 'bcrypt';
+import { isValidEmail, isValidPassword, sanitizeString, isValidLength } from '../utils/validation.js';
 
 export function registerAuthRoutes(app: App) {
   console.log('Registering auth routes...');
@@ -46,6 +47,14 @@ export function registerAuthRoutes(app: App) {
     async (request: FastifyRequest, reply: FastifyReply) => {
       try {
         const { email, password } = request.body as { email: string; password: string };
+
+        // Validar email
+        if (!isValidEmail(email)) {
+          return reply.code(400).send({ 
+            error: 'Invalid email format',
+            message: 'Please provide a valid email address'
+          });
+        }
 
         const userRecord = await app.db.query.user.findFirst({
           where: eq(user.email, email),
@@ -94,15 +103,43 @@ export function registerAuthRoutes(app: App) {
           required: ['email', 'password', 'name'],
           properties: {
             email: { type: 'string', format: 'email' },
-            password: { type: 'string', minLength: 6 },
-            name: { type: 'string', minLength: 1 },
+            password: { type: 'string', minLength: 8 },
+            name: { type: 'string', minLength: 1, maxLength: 50 },
           },
         },
       },
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       try {
-        const { email, password, name } = request.body as any;
+        let { email, password, name } = request.body as any;
+
+        // Validar email
+        if (!isValidEmail(email)) {
+          return reply.code(400).send({ 
+            error: 'Invalid email format',
+            message: 'Please provide a valid email address (e.g., user@example.com)'
+          });
+        }
+
+        // Validar password (mínimo 8 caracteres, al menos 1 letra y 1 número)
+        if (!isValidPassword(password)) {
+          return reply.code(400).send({ 
+            error: 'Invalid password',
+            message: 'Password must be at least 8 characters long and contain at least one letter and one number'
+          });
+        }
+
+        // Validar y sanitizar nombre (2-50 caracteres)
+        if (!isValidLength(name, 2, 50)) {
+          return reply.code(400).send({ 
+            error: 'Invalid name',
+            message: 'Name must be between 2 and 50 characters'
+          });
+        }
+        name = sanitizeString(name.trim());
+
+        // Convertir email a lowercase para consistencia
+        email = email.toLowerCase().trim();
 
         const existing = await app.db.query.user.findFirst({
           where: eq(user.email, email),
