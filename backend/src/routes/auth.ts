@@ -238,12 +238,12 @@ export function registerAuthRoutes(app: App) {
             return reply.code(401).send({ error: 'Unauthorized', message: 'Token inválido' });
           }
 
-          // Verificar si el token expiró (24 horas) - Date.now() da milisegundos
+          // Verificar si el token expiró (5 minutos para pruebas) - Date.now() da milisegundos
           const tokenTime = parseInt(timestamp);
-          const now = Date.now(); // Milisegundos, no segundos
-          const oneDay = 24 * 60 * 60 * 1000; // 24 horas en milisegundos
+          const now = Date.now(); // Milisegundos
+          const fiveMinutes = 5 * 60 * 1000; // 5 minutos en milisegundos
           
-          if (now - tokenTime > oneDay) {
+          if (now - tokenTime > fiveMinutes) {
             return reply.code(401).send({ error: 'Unauthorized', message: 'Token expirado' });
           }
 
@@ -328,12 +328,12 @@ export function registerAuthRoutes(app: App) {
             return reply.code(401).send({ error: 'Unauthorized', message: 'Token inválido' });
           }
 
-          // Verificar si el token expiró (24 horas) - Date.now() da milisegundos
+          // Verificar si el token expiró (5 minutos para pruebas) - Date.now() da milisegundos
           const tokenTime = parseInt(timestamp);
           const now = Date.now(); // Milisegundos
-          const oneDay = 24 * 60 * 60 * 1000; // 24 horas en milisegundos
+          const fiveMinutes = 5 * 60 * 1000; // 5 minutos en milisegundos
           
-          if (now - tokenTime > oneDay) {
+          if (now - tokenTime > fiveMinutes) {
             return reply.code(401).send({ error: 'Unauthorized', message: 'Token expirado' });
           }
           
