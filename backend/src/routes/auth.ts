@@ -4,7 +4,7 @@ import { user, refreshToken } from '../db/auth-schema.js';
 import { eq, and, isNull, gt } from 'drizzle-orm';
 import bcrypt from 'bcrypt';
 import { isValidEmail, isValidPassword, sanitizeString, isValidLength } from '../utils/validation.js';
-import { createAccessToken, createRefreshToken, verifyAccessToken, verifyRefreshToken } from '../utils/jwt.js';
+import { createAccessToken, createRefreshToken, verifyAccessToken, verifyRefreshToken } from '../utils/jwt';
 
 export function registerAuthRoutes(app: App) {
   console.log('Registering auth routes...');
