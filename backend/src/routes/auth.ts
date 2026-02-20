@@ -1,9 +1,10 @@
 import type { App } from '../index.js';
 import type { FastifyRequest, FastifyReply } from 'fastify';
-import { user } from '../db/auth-schema.js';
-import { eq } from 'drizzle-orm';
+import { user, refreshToken } from '../db/auth-schema.js';
+import { eq, and, isNull, gt } from 'drizzle-orm';
 import bcrypt from 'bcrypt';
 import { isValidEmail, isValidPassword, sanitizeString, isValidLength } from '../utils/validation.js';
+import { createAccessToken, createRefreshToken, verifyAccessToken, verifyRefreshToken } from '../utils/jwt.js';
 
 export function registerAuthRoutes(app: App) {
   console.log('Registering auth routes...');
@@ -29,7 +30,8 @@ export function registerAuthRoutes(app: App) {
           200: {
             type: 'object',
             properties: {
-              token: { type: 'string' },
+              accessToken: { type: 'string' },
+              refreshToken: { type: 'string' },
               user: {
                 type: 'object',
                 properties: {
@@ -71,11 +73,23 @@ export function registerAuthRoutes(app: App) {
           return reply.code(401).send({ error: 'Invalid credentials' });
         }
 
-        // Token simple: solo userId (sin timestamp de expiración)
-        const token = Buffer.from(userRecord.id).toString('base64');
+        // Crear tokens JWT
+        const accessToken = createAccessToken(userRecord.id, userRecord.email, userRecord.role);
+        const refreshTokenString = createRefreshToken(userRecord.id, userRecord.email, userRecord.role);
+
+        // Guardar refresh token en base de datos
+        const refreshExpiresAt = new Date();
+        refreshExpiresAt.setDate(refreshExpiresAt.getDate() + 7); // 7 días
+
+        await app.db.insert(refreshToken).values({
+          userId: userRecord.id,
+          token: refreshTokenString,
+          expiresAt: refreshExpiresAt,
+        });
 
         return {
-          token,
+          accessToken,
+          refreshToken: refreshTokenString,
           user: {
             id: userRecord.id,
             email: userRecord.email,
@@ -178,7 +192,23 @@ export function registerAuthRoutes(app: App) {
           })
           .returning();
 
+        // Crear tokens JWT
+        const accessToken = createAccessToken(newUser.id, newUser.email, newUser.role);
+        const refreshTokenString = createRefreshToken(newUser.id, newUser.email, newUser.role);
+
+        // Guardar refresh token en base de datos
+        const refreshExpiresAt = new Date();
+        refreshExpiresAt.setDate(refreshExpiresAt.getDate() + 7); // 7 días
+
+        await app.db.insert(refreshToken).values({
+          userId: newUser.id,
+          token: refreshTokenString,
+          expiresAt: refreshExpiresAt,
+        });
+
         return {
+          accessToken,
+          refreshToken: refreshTokenString,
           user: {
             id: newUser.id,
             email: newUser.email,
@@ -193,9 +223,109 @@ export function registerAuthRoutes(app: App) {
   );
 
   /**
+   * POST /api/auth/refresh
+   * Refresh access token using refresh token
+   */
+  app.fastify.post(
+    '/api/auth/refresh',
+    {
+      schema: {
+        description: 'Refresh access token',
+        tags: ['auth'],
+        body: {
+          type: 'object',
+          required: ['refreshToken'],
+          properties: {
+            refreshToken: { type: 'string' },
+          },
+        },
+      },
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      try {
+        const { refreshToken: refreshTokenString } = request.body as { refreshToken: string };
+
+        // Verificar el refresh token JWT
+        const payload = verifyRefreshToken(refreshTokenString);
+        if (!payload) {
+          return reply.code(401).send({ error: 'Invalid or expired refresh token' });
+        }
+
+        // Verificar que el token existe en la base de datos y no está revocado
+        const storedToken = await app.db.query.refreshToken.findFirst({
+          where: and(
+            eq(refreshToken.token, refreshTokenString),
+            isNull(refreshToken.revokedAt),
+            gt(refreshToken.expiresAt, new Date())
+          ),
+        });
+
+        if (!storedToken) {
+          return reply.code(401).send({ error: 'Refresh token not found or revoked' });
+        }
+
+        // Obtener datos del usuario
+        const userRecord = await app.db.query.user.findFirst({
+          where: eq(user.id, payload.userId),
+        });
+
+        if (!userRecord) {
+          return reply.code(404).send({ error: 'User not found' });
+        }
+
+        // Generar nuevo access token
+        const newAccessToken = createAccessToken(userRecord.id, userRecord.email, userRecord.role);
+
+        return {
+          accessToken: newAccessToken,
+        };
+      } catch (error) {
+        app.logger.error({ err: error }, 'Refresh token error');
+        throw error;
+      }
+    }
+  );
+
+  /**
+   * POST /api/auth/logout
+   * Revoke refresh token
+   */
+  app.fastify.post(
+    '/api/auth/logout',
+    {
+      schema: {
+        description: 'Logout user and revoke refresh token',
+        tags: ['auth'],
+        body: {
+          type: 'object',
+          required: ['refreshToken'],
+          properties: {
+            refreshToken: { type: 'string' },
+          },
+        },
+      },
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      try {
+        const { refreshToken: refreshTokenString } = request.body as { refreshToken: string };
+
+        // Revocar el token en la base de datos
+        await app.db
+          .update(refreshToken)
+          .set({ revokedAt: new Date() })
+          .where(eq(refreshToken.token, refreshTokenString));
+
+        return { message: 'Logged out successfully' };
+      } catch (error) {
+        app.logger.error({ err: error }, 'Logout error');
+        throw error;
+      }
+    }
+  );
+
+  /**
    * GET /api/auth/me
    * Get current user profile
-   * Requires authentication
    */
   app.fastify.get(
     '/api/auth/me',
@@ -221,7 +351,7 @@ export function registerAuthRoutes(app: App) {
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       try {
-        // Obtener token del header manualmente
+        // Obtener token del header
         const authHeader = request.headers.authorization;
         
         if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -230,35 +360,31 @@ export function registerAuthRoutes(app: App) {
 
         const token = authHeader.substring(7);
         
-        // Decodificar token (base64) - ahora solo contiene el userId
-        try {
-          const userId = Buffer.from(token, 'base64').toString('utf-8');
-          
-          if (!userId) {
-            return reply.code(401).send({ error: 'Unauthorized', message: 'Token inválido' });
-          }
-
-          // Buscar usuario
-          const userRecord = await app.db.query.user.findFirst({
-            where: eq(user.id, userId),
-          });
-
-          if (!userRecord) {
-            return reply.code(404).send({ error: 'User not found' });
-          }
-
-          return {
-            id: userRecord.id,
-            email: userRecord.email,
-            name: userRecord.name,
-            image: userRecord.image,
-            role: userRecord.role,
-            emailVerified: userRecord.emailVerified,
-            createdAt: userRecord.createdAt,
-          };
-        } catch (error) {
-          return reply.code(401).send({ error: 'Unauthorized', message: 'Token inválido' });
+        // Verificar JWT
+        const payload = verifyAccessToken(token);
+        
+        if (!payload) {
+          return reply.code(401).send({ error: 'Unauthorized', message: 'Token inválido o expirado' });
         }
+
+        // Buscar usuario
+        const userRecord = await app.db.query.user.findFirst({
+          where: eq(user.id, payload.userId),
+        });
+
+        if (!userRecord) {
+          return reply.code(404).send({ error: 'User not found' });
+        }
+
+        return {
+          id: userRecord.id,
+          email: userRecord.email,
+          name: userRecord.name,
+          image: userRecord.image,
+          role: userRecord.role,
+          emailVerified: userRecord.emailVerified,
+          createdAt: userRecord.createdAt,
+        };
       } catch (error) {
         app.logger.error({ err: error }, 'Get profile error');
         throw error;
@@ -269,7 +395,6 @@ export function registerAuthRoutes(app: App) {
   /**
    * PUT /api/auth/profile
    * Update current user profile
-   * Requires authentication
    */
   app.fastify.put(
     '/api/auth/profile',
@@ -300,7 +425,7 @@ export function registerAuthRoutes(app: App) {
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       try {
-        // Obtener token del header manualmente
+        // Obtener token del header
         const authHeader = request.headers.authorization;
         
         if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -309,16 +434,11 @@ export function registerAuthRoutes(app: App) {
 
         const token = authHeader.substring(7);
         
-        // Decodificar token (base64) - ahora solo contiene el userId
-        let userId: string;
-        try {
-          userId = Buffer.from(token, 'base64').toString('utf-8');
-          
-          if (!userId) {
-            return reply.code(401).send({ error: 'Unauthorized', message: 'Token inválido' });
-          }
-        } catch (error) {
-          return reply.code(401).send({ error: 'Unauthorized', message: 'Token inválido' });
+        // Verificar JWT
+        const payload = verifyAccessToken(token);
+        
+        if (!payload) {
+          return reply.code(401).send({ error: 'Unauthorized', message: 'Token inválido o expirado' });
         }
 
         const { name, image } = request.body as { name?: string; image?: string };
@@ -344,7 +464,7 @@ export function registerAuthRoutes(app: App) {
         if (image !== undefined) updateData.image = image;
 
         // Si no hay nada que actualizar
-        if (Object.keys(updateData).length === 1) { // Solo updatedAt
+        if (Object.keys(updateData).length === 1) {
           return reply.code(400).send({ 
             error: 'No data provided',
             message: 'Please provide name or image to update'
@@ -354,7 +474,7 @@ export function registerAuthRoutes(app: App) {
         const [updatedUser] = await app.db
           .update(user)
           .set(updateData)
-          .where(eq(user.id, userId))
+          .where(eq(user.id, payload.userId))
           .returning();
 
         if (!updatedUser) {
