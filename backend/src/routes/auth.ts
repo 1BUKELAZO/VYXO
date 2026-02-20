@@ -71,14 +71,8 @@ export function registerAuthRoutes(app: App) {
           return reply.code(401).send({ error: 'Invalid credentials' });
         }
 
-        // DEBUG: Logs para diagnóstico del token
-        const now = Date.now();
-        console.log('DEBUG LOGIN - Timestamp generado:', now);
-        console.log('DEBUG LOGIN - Fecha:', new Date(now).toISOString());
-
-        const token = Buffer.from(`${userRecord.id}:${now}`).toString('base64');
-        
-        console.log('DEBUG LOGIN - Token:', token);
+        // Token simple: solo userId (sin timestamp de expiración)
+        const token = Buffer.from(userRecord.id).toString('base64');
 
         return {
           token,
@@ -236,33 +230,12 @@ export function registerAuthRoutes(app: App) {
 
         const token = authHeader.substring(7);
         
-        // Decodificar token (base64)
+        // Decodificar token (base64) - ahora solo contiene el userId
         try {
-          const decoded = Buffer.from(token, 'base64').toString('utf-8');
-          const [userId, timestamp] = decoded.split(':');
+          const userId = Buffer.from(token, 'base64').toString('utf-8');
           
-          if (!userId || !timestamp) {
+          if (!userId) {
             return reply.code(401).send({ error: 'Unauthorized', message: 'Token inválido' });
-          }
-
-          // DEBUG: Logs para diagnóstico
-          const tokenTime = parseInt(timestamp);
-          const now = Date.now();
-          const twentyFourHours = 24 * 60 * 60 * 1000; // 24 horas en milisegundos (86,400,000 ms)
-          
-          console.log('DEBUG VALIDATE - Token recibido:', token);
-          console.log('DEBUG VALIDATE - Decodificado:', decoded);
-          console.log('DEBUG VALIDATE - TokenTime:', tokenTime);
-          console.log('DEBUG VALIDATE - TokenTime (fecha):', new Date(tokenTime).toISOString());
-          console.log('DEBUG VALIDATE - Now:', now);
-          console.log('DEBUG VALIDATE - Now (fecha):', new Date(now).toISOString());
-          console.log('DEBUG VALIDATE - Diferencia (ms):', now - tokenTime);
-          console.log('DEBUG VALIDATE - Diferencia (min):', (now - tokenTime) / 1000 / 60);
-          console.log('DEBUG VALIDATE - ¿Expirado?:', now - tokenTime > twentyFourHours);
-
-          // Verificar si el token expiró (24 horas para pruebas)
-          if (now - tokenTime > twentyFourHours) {
-            return reply.code(401).send({ error: 'Unauthorized', message: 'Token expirado' });
           }
 
           // Buscar usuario
@@ -336,26 +309,14 @@ export function registerAuthRoutes(app: App) {
 
         const token = authHeader.substring(7);
         
-        // Decodificar token (base64)
+        // Decodificar token (base64) - ahora solo contiene el userId
         let userId: string;
         try {
-          const decoded = Buffer.from(token, 'base64').toString('utf-8');
-          const [id, timestamp] = decoded.split(':');
+          userId = Buffer.from(token, 'base64').toString('utf-8');
           
-          if (!id || !timestamp) {
+          if (!userId) {
             return reply.code(401).send({ error: 'Unauthorized', message: 'Token inválido' });
           }
-
-          // Verificar si el token expiró (24 horas para pruebas)
-          const tokenTime = parseInt(timestamp);
-          const now = Date.now();
-          const twentyFourHours = 24 * 60 * 60 * 1000; // 24 horas en milisegundos
-          
-          if (now - tokenTime > twentyFourHours) {
-            return reply.code(401).send({ error: 'Unauthorized', message: 'Token expirado' });
-          }
-          
-          userId = id;
         } catch (error) {
           return reply.code(401).send({ error: 'Unauthorized', message: 'Token inválido' });
         }
