@@ -4,7 +4,108 @@ import { user, refreshToken } from '../db/auth-schema.js';
 import { eq, and, isNull, gt } from 'drizzle-orm';
 import bcrypt from 'bcrypt';
 import { isValidEmail, isValidPassword, sanitizeString, isValidLength } from '../utils/validation.js';
-import { createAccessToken, createRefreshToken, verifyAccessToken, verifyRefreshToken } from '../utils/jwt';
+import crypto from 'crypto';
+
+// ============================================
+// JWT UTILITIES (INLINE para evitar problemas de build)
+// ============================================
+
+const ACCESS_TOKEN_SECRET = process.env.ACCESS_TOKEN_SECRET || 'vyxo-access-secret-key-2026';
+const REFRESH_TOKEN_SECRET = process.env.REFRESH_TOKEN_SECRET || 'vyxo-refresh-secret-key-2026';
+const ACCESS_TOKEN_EXPIRES_IN = '15m';
+const REFRESH_TOKEN_EXPIRES_IN = '7d';
+
+interface JWTPayload {
+  userId: string;
+  email: string;
+  role: string;
+  type: 'access' | 'refresh';
+  iat: number;
+  exp: number;
+}
+
+function base64UrlEncode(str: string): string {
+  return Buffer.from(str).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+}
+
+function base64UrlDecode(str: string): string {
+  const padding = 4 - (str.length % 4);
+  if (padding !== 4) str += '='.repeat(padding);
+  return Buffer.from(str.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf-8');
+}
+
+function createSignature(header: string, payload: string, secret: string): string {
+  return crypto.createHmac('sha256', secret).update(`${header}.${payload}`).digest('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+}
+
+function parseExpiration(expiresIn: string): number {
+  const match = expiresIn.match(/^(\d+)([smhd])$/);
+  if (!match) return 900;
+  const value = parseInt(match[1]);
+  const unit = match[2];
+  switch (unit) {
+    case 's': return value;
+    case 'm': return value * 60;
+    case 'h': return value * 60 * 60;
+    case 'd': return value * 24 * 60 * 60;
+    default: return 900;
+  }
+}
+
+function timingSafeCompare(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let result = 0;
+  for (let i = 0; i < a.length; i++) result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return result === 0;
+}
+
+function createJWT(payload: Omit<JWTPayload, 'iat' | 'exp'>, secret: string, expiresIn: string): string {
+  const now = Math.floor(Date.now() / 1000);
+  const exp = now + parseExpiration(expiresIn);
+  const fullPayload = { ...payload, iat: now, exp };
+  const header = { alg: 'HS256', typ: 'JWT' };
+  const encodedHeader = base64UrlEncode(JSON.stringify(header));
+  const encodedPayload = base64UrlEncode(JSON.stringify(fullPayload));
+  const signature = createSignature(encodedHeader, encodedPayload, secret);
+  return `${encodedHeader}.${encodedPayload}.${signature}`;
+}
+
+function verifyJWT(token: string, secret: string): JWTPayload | null {
+  try {
+    const [encodedHeader, encodedPayload, signature] = token.split('.');
+    if (!encodedHeader || !encodedPayload || !signature) return null;
+    const expectedSignature = createSignature(encodedHeader, encodedPayload, secret);
+    if (!timingSafeCompare(signature, expectedSignature)) return null;
+    const payload: JWTPayload = JSON.parse(base64UrlDecode(encodedPayload));
+    const now = Math.floor(Date.now() / 1000);
+    if (payload.exp < now) return null;
+    return payload;
+  } catch (error) {
+    return null;
+  }
+}
+
+function createAccessToken(userId: string, email: string, role: string): string {
+  return createJWT({ userId, email, role, type: 'access' }, ACCESS_TOKEN_SECRET, ACCESS_TOKEN_EXPIRES_IN);
+}
+
+function createRefreshToken(userId: string, email: string, role: string): string {
+  return createJWT({ userId, email, role, type: 'refresh' }, REFRESH_TOKEN_SECRET, REFRESH_TOKEN_EXPIRES_IN);
+}
+
+function verifyAccessToken(token: string): JWTPayload | null {
+  const payload = verifyJWT(token, ACCESS_TOKEN_SECRET);
+  return payload && payload.type === 'access' ? payload : null;
+}
+
+function verifyRefreshToken(token: string): JWTPayload | null {
+  const payload = verifyJWT(token, REFRESH_TOKEN_SECRET);
+  return payload && payload.type === 'refresh' ? payload : null;
+}
+
+// ============================================
+// AUTH ROUTES
+// ============================================
 
 export function registerAuthRoutes(app: App) {
   console.log('Registering auth routes...');
@@ -50,7 +151,6 @@ export function registerAuthRoutes(app: App) {
       try {
         const { email, password } = request.body as { email: string; password: string };
 
-        // Validar email
         if (!isValidEmail(email)) {
           return reply.code(400).send({ 
             error: 'Invalid email format',
@@ -66,20 +166,17 @@ export function registerAuthRoutes(app: App) {
           return reply.code(401).send({ error: 'Invalid credentials' });
         }
 
-        // Comparar contraseña usando bcrypt
         const isValid = await bcrypt.compare(password, userRecord.password);
         
         if (!isValid) {
           return reply.code(401).send({ error: 'Invalid credentials' });
         }
 
-        // Crear tokens JWT
         const accessToken = createAccessToken(userRecord.id, userRecord.email, userRecord.role);
         const refreshTokenString = createRefreshToken(userRecord.id, userRecord.email, userRecord.role);
 
-        // Guardar refresh token en base de datos
         const refreshExpiresAt = new Date();
-        refreshExpiresAt.setDate(refreshExpiresAt.getDate() + 7); // 7 días
+        refreshExpiresAt.setDate(refreshExpiresAt.getDate() + 7);
 
         await app.db.insert(refreshToken).values({
           userId: userRecord.id,
@@ -128,7 +225,6 @@ export function registerAuthRoutes(app: App) {
       try {
         let { email, password, name } = request.body as any;
 
-        // Validar email
         if (!isValidEmail(email)) {
           return reply.code(400).send({ 
             error: 'Invalid email format',
@@ -136,7 +232,6 @@ export function registerAuthRoutes(app: App) {
           });
         }
 
-        // Validar password (mínimo 8 caracteres, al menos 1 letra y 1 número)
         if (!isValidPassword(password)) {
           return reply.code(400).send({ 
             error: 'Invalid password',
@@ -144,7 +239,6 @@ export function registerAuthRoutes(app: App) {
           });
         }
 
-        // Validar y sanitizar nombre (2-50 caracteres)
         if (!isValidLength(name, 2, 50)) {
           return reply.code(400).send({ 
             error: 'Invalid name',
@@ -153,7 +247,6 @@ export function registerAuthRoutes(app: App) {
         }
         name = sanitizeString(name.trim());
 
-        // Convertir email a lowercase para consistencia
         email = email.toLowerCase().trim();
 
         const existing = await app.db.query.user.findFirst({
@@ -174,7 +267,6 @@ export function registerAuthRoutes(app: App) {
 
         const userId = generateUUID();
 
-        // Hashear la contraseña antes de guardar
         const hashedPassword = await bcrypt.hash(password, 10);
 
         const [newUser] = await app.db
@@ -192,13 +284,11 @@ export function registerAuthRoutes(app: App) {
           })
           .returning();
 
-        // Crear tokens JWT
         const accessToken = createAccessToken(newUser.id, newUser.email, newUser.role);
         const refreshTokenString = createRefreshToken(newUser.id, newUser.email, newUser.role);
 
-        // Guardar refresh token en base de datos
         const refreshExpiresAt = new Date();
-        refreshExpiresAt.setDate(refreshExpiresAt.getDate() + 7); // 7 días
+        refreshExpiresAt.setDate(refreshExpiresAt.getDate() + 7);
 
         await app.db.insert(refreshToken).values({
           userId: newUser.id,
@@ -224,7 +314,6 @@ export function registerAuthRoutes(app: App) {
 
   /**
    * POST /api/auth/refresh
-   * Refresh access token using refresh token
    */
   app.fastify.post(
     '/api/auth/refresh',
@@ -245,13 +334,11 @@ export function registerAuthRoutes(app: App) {
       try {
         const { refreshToken: refreshTokenString } = request.body as { refreshToken: string };
 
-        // Verificar el refresh token JWT
         const payload = verifyRefreshToken(refreshTokenString);
         if (!payload) {
           return reply.code(401).send({ error: 'Invalid or expired refresh token' });
         }
 
-        // Verificar que el token existe en la base de datos y no está revocado
         const storedToken = await app.db.query.refreshToken.findFirst({
           where: and(
             eq(refreshToken.token, refreshTokenString),
@@ -264,7 +351,6 @@ export function registerAuthRoutes(app: App) {
           return reply.code(401).send({ error: 'Refresh token not found or revoked' });
         }
 
-        // Obtener datos del usuario
         const userRecord = await app.db.query.user.findFirst({
           where: eq(user.id, payload.userId),
         });
@@ -273,7 +359,6 @@ export function registerAuthRoutes(app: App) {
           return reply.code(404).send({ error: 'User not found' });
         }
 
-        // Generar nuevo access token
         const newAccessToken = createAccessToken(userRecord.id, userRecord.email, userRecord.role);
 
         return {
@@ -288,7 +373,6 @@ export function registerAuthRoutes(app: App) {
 
   /**
    * POST /api/auth/logout
-   * Revoke refresh token
    */
   app.fastify.post(
     '/api/auth/logout',
@@ -309,7 +393,6 @@ export function registerAuthRoutes(app: App) {
       try {
         const { refreshToken: refreshTokenString } = request.body as { refreshToken: string };
 
-        // Revocar el token en la base de datos
         await app.db
           .update(refreshToken)
           .set({ revokedAt: new Date() })
@@ -325,7 +408,6 @@ export function registerAuthRoutes(app: App) {
 
   /**
    * GET /api/auth/me
-   * Get current user profile
    */
   app.fastify.get(
     '/api/auth/me',
@@ -351,7 +433,6 @@ export function registerAuthRoutes(app: App) {
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       try {
-        // Obtener token del header
         const authHeader = request.headers.authorization;
         
         if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -360,14 +441,12 @@ export function registerAuthRoutes(app: App) {
 
         const token = authHeader.substring(7);
         
-        // Verificar JWT
         const payload = verifyAccessToken(token);
         
         if (!payload) {
           return reply.code(401).send({ error: 'Unauthorized', message: 'Token inválido o expirado' });
         }
 
-        // Buscar usuario
         const userRecord = await app.db.query.user.findFirst({
           where: eq(user.id, payload.userId),
         });
@@ -394,7 +473,6 @@ export function registerAuthRoutes(app: App) {
 
   /**
    * PUT /api/auth/profile
-   * Update current user profile
    */
   app.fastify.put(
     '/api/auth/profile',
@@ -425,7 +503,6 @@ export function registerAuthRoutes(app: App) {
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       try {
-        // Obtener token del header
         const authHeader = request.headers.authorization;
         
         if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -434,7 +511,6 @@ export function registerAuthRoutes(app: App) {
 
         const token = authHeader.substring(7);
         
-        // Verificar JWT
         const payload = verifyAccessToken(token);
         
         if (!payload) {
@@ -443,7 +519,6 @@ export function registerAuthRoutes(app: App) {
 
         const { name, image } = request.body as { name?: string; image?: string };
 
-        // Validar y sanitizar nombre si se proporciona
         let sanitizedName: string | undefined;
         if (name !== undefined) {
           if (!isValidLength(name, 2, 50)) {
@@ -455,7 +530,6 @@ export function registerAuthRoutes(app: App) {
           sanitizedName = sanitizeString(name.trim());
         }
 
-        // Preparar datos de actualización
         const updateData: any = {
           updatedAt: new Date(),
         };
@@ -463,7 +537,6 @@ export function registerAuthRoutes(app: App) {
         if (sanitizedName !== undefined) updateData.name = sanitizedName;
         if (image !== undefined) updateData.image = image;
 
-        // Si no hay nada que actualizar
         if (Object.keys(updateData).length === 1) {
           return reply.code(400).send({ 
             error: 'No data provided',
