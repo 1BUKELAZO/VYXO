@@ -313,7 +313,7 @@ export function registerAuthRoutes(app: App) {
   );
 
   /**
-   * POST /api/auth/refresh
+   * POST /api/auth/refresh - FIXED VERSION
    */
   app.fastify.post(
     '/api/auth/refresh',
@@ -334,11 +334,7 @@ export function registerAuthRoutes(app: App) {
       try {
         const { refreshToken: refreshTokenString } = request.body as { refreshToken: string };
 
-        const payload = verifyRefreshToken(refreshTokenString);
-        if (!payload) {
-          return reply.code(401).send({ error: 'Invalid or expired refresh token' });
-        }
-
+        // Buscar el token en la base de datos (sin validar JWT, solo verificar existencia)
         const storedToken = await app.db.query.refreshToken.findFirst({
           where: and(
             eq(refreshToken.token, refreshTokenString),
@@ -351,14 +347,16 @@ export function registerAuthRoutes(app: App) {
           return reply.code(401).send({ error: 'Refresh token not found or revoked' });
         }
 
+        // Obtener datos del usuario
         const userRecord = await app.db.query.user.findFirst({
-          where: eq(user.id, payload.userId),
+          where: eq(user.id, storedToken.userId),
         });
 
         if (!userRecord) {
           return reply.code(404).send({ error: 'User not found' });
         }
 
+        // Generar nuevo access token
         const newAccessToken = createAccessToken(userRecord.id, userRecord.email, userRecord.role);
 
         return {
