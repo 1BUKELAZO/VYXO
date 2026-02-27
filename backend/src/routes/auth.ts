@@ -24,6 +24,18 @@ interface JWTPayload {
   exp: number;
 }
 
+// ============================================
+// AUTHENTICATED REQUEST INTERFACE
+// ============================================
+
+export interface AuthenticatedRequest extends FastifyRequest {
+  user: {
+    userId: string;
+    email: string;
+    role: string;
+  };
+}
+
 function base64UrlEncode(str: string): string {
   return Buffer.from(str).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
 }
@@ -104,6 +116,107 @@ function verifyRefreshToken(token: string): JWTPayload | null {
 }
 
 // ============================================
+// AUTH MIDDLEWARE (REUTILIZABLE)
+// ==========================================
+
+/**
+ * Middleware de autenticación reutilizable
+ * Verifica el JWT y adjunta los datos del usuario al request
+ */
+export async function authenticateRequest(
+  request: FastifyRequest,
+  reply: FastifyReply
+): Promise<void> {
+  const authHeader = request.headers.authorization;
+  
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    reply.code(401).send({ 
+      error: 'Unauthorized', 
+      message: 'Token no proporcionado. Usa: Authorization: Bearer <token>' 
+    });
+    return;
+  }
+
+  const token = authHeader.substring(7).trim();
+  
+  if (!token) {
+    reply.code(401).send({ 
+      error: 'Unauthorized', 
+      message: 'Token vacío' 
+    });
+    return;
+  }
+
+  const payload = verifyAccessToken(token);
+  
+  if (!payload) {
+    reply.code(401).send({ 
+      error: 'Unauthorized', 
+      message: 'Token inválido o expirado' 
+    });
+    return;
+  }
+
+  // Adjuntar datos del usuario al request para uso posterior
+  (request as AuthenticatedRequest).user = {
+    userId: payload.userId,
+    email: payload.email,
+    role: payload.role
+  };
+}
+
+/**
+ * Middleware opcional: No falla si no hay token, pero lo adjunta si existe
+ */
+export async function optionalAuth(
+  request: FastifyRequest,
+  reply: FastifyReply
+): Promise<void> {
+  const authHeader = request.headers.authorization;
+  
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return; // No hay token, pero no es error
+  }
+
+  const token = authHeader.substring(7).trim();
+  const payload = verifyAccessToken(token);
+  
+  if (payload) {
+    (request as AuthenticatedRequest).user = {
+      userId: payload.userId,
+      email: payload.email,
+      role: payload.role
+    };
+  }
+}
+
+/**
+ * Middleware de autorización por roles
+ * Uso: authorizeRoles('admin', 'moderator')
+ */
+export function authorizeRoles(...allowedRoles: string[]) {
+  return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
+    const authRequest = request as AuthenticatedRequest;
+    
+    if (!authRequest.user) {
+      reply.code(401).send({ 
+        error: 'Unauthorized', 
+        message: 'Debes iniciar sesión primero' 
+      });
+      return;
+    }
+
+    if (!allowedRoles.includes(authRequest.user.role)) {
+      reply.code(403).send({ 
+        error: 'Forbidden', 
+        message: `Se requiere rol: ${allowedRoles.join(' o ')}` 
+      });
+      return;
+    }
+  };
+}
+
+// ============================================
 // AUTH ROUTES
 // ============================================
 
@@ -178,7 +291,6 @@ export function registerAuthRoutes(app: App) {
         const refreshExpiresAt = new Date();
         refreshExpiresAt.setDate(refreshExpiresAt.getDate() + 7);
 
-        // 🔧 DEBUG: Log del token creado
         console.log('🔐 LOGIN - Token creado:', {
           userId: userRecord.id,
           tokenLength: refreshTokenString.length,
@@ -192,7 +304,6 @@ export function registerAuthRoutes(app: App) {
           expiresAt: refreshExpiresAt,
         });
 
-        // 🔧 DEBUG: Verificar que se guardó
         const savedToken = await app.db.query.refreshToken.findFirst({
           where: eq(refreshToken.token, refreshTokenString),
         });
@@ -304,7 +415,6 @@ export function registerAuthRoutes(app: App) {
         const refreshExpiresAt = new Date();
         refreshExpiresAt.setDate(refreshExpiresAt.getDate() + 7);
 
-        // 🔧 DEBUG: Log del token creado
         console.log('🔐 REGISTER - Token creado:', {
           userId: newUser.id,
           tokenLength: refreshTokenString.length,
@@ -334,7 +444,7 @@ export function registerAuthRoutes(app: App) {
   );
 
   /**
-   * POST /api/auth/refresh - FIXED VERSION con debug detallado
+   * POST /api/auth/refresh
    */
   app.fastify.post(
     '/api/auth/refresh',
@@ -354,11 +464,9 @@ export function registerAuthRoutes(app: App) {
     async (request: FastifyRequest, reply: FastifyReply) => {
       try {
         let { refreshToken: refreshTokenString } = request.body as { refreshToken: string };
-
-        // 🔧 FIX 1: Limpiar el token recibido (remover espacios, comillas, etc)
+        
         refreshTokenString = refreshTokenString.trim();
         
-        // Si viene con comillas (algunos clientes envían JSON stringificado)
         if (refreshTokenString.startsWith('"') && refreshTokenString.endsWith('"')) {
           refreshTokenString = refreshTokenString.slice(1, -1);
         }
@@ -369,13 +477,11 @@ export function registerAuthRoutes(app: App) {
           last50: refreshTokenString.substring(refreshTokenString.length - 50)
         });
 
-        // 🔧 FIX 2: Verificar que el token no esté vacío
         if (!refreshTokenString || refreshTokenString.length < 10) {
           console.log('❌ REFRESH - Token vacío o muy corto');
           return reply.code(400).send({ error: 'Invalid refresh token format' });
         }
 
-        // 🔧 FIX 3: Buscar TODOS los tokens activos del usuario primero (para debug)
         const allActiveTokens = await app.db.query.refreshToken.findMany({
           where: and(
             isNull(refreshToken.revokedAt),
@@ -394,7 +500,6 @@ export function registerAuthRoutes(app: App) {
           });
         }
 
-        // 🔧 FIX 4: Buscar el token específico con comparación exacta
         const storedToken = await app.db.query.refreshToken.findFirst({
           where: and(
             eq(refreshToken.token, refreshTokenString),
@@ -406,7 +511,6 @@ export function registerAuthRoutes(app: App) {
         if (!storedToken) {
           console.log('❌ REFRESH - Token no encontrado en BD');
           
-          // 🔧 DEBUG: Intentar búsqueda parcial para ver si existe el token (revocado o expirado)
           const anyToken = await app.db.query.refreshToken.findFirst({
             where: eq(refreshToken.token, refreshTokenString),
           });
@@ -440,7 +544,6 @@ export function registerAuthRoutes(app: App) {
           createdAt: storedToken.createdAt
         });
 
-        // Obtener datos del usuario
         const userRecord = await app.db.query.user.findFirst({
           where: eq(user.id, storedToken.userId),
         });
@@ -450,7 +553,6 @@ export function registerAuthRoutes(app: App) {
           return reply.code(404).send({ error: 'User not found' });
         }
 
-        // Generar nuevo access token
         const newAccessToken = createAccessToken(userRecord.id, userRecord.email, userRecord.role);
 
         console.log('✅ REFRESH - Nuevo access token generado para:', userRecord.email);
@@ -488,7 +590,6 @@ export function registerAuthRoutes(app: App) {
       try {
         let { refreshToken: refreshTokenString } = request.body as { refreshToken: string };
         
-        // Limpiar token igual que en refresh
         refreshTokenString = refreshTokenString.trim();
         if (refreshTokenString.startsWith('"') && refreshTokenString.endsWith('"')) {
           refreshTokenString = refreshTokenString.slice(1, -1);
@@ -511,11 +612,12 @@ export function registerAuthRoutes(app: App) {
   );
 
   /**
-   * GET /api/auth/me
+   * GET /api/auth/me - CON MIDDLEWARE REUTILIZABLE
    */
   app.fastify.get(
     '/api/auth/me',
     {
+      preHandler: [authenticateRequest],
       schema: {
         description: 'Get current user profile',
         tags: ['auth'],
@@ -535,24 +637,11 @@ export function registerAuthRoutes(app: App) {
         },
       },
     },
-    async (request: FastifyRequest, reply: FastifyReply) => {
+    async (request: AuthenticatedRequest, reply: FastifyReply) => {
       try {
-        const authHeader = request.headers.authorization;
-        
-        if (!authHeader || !authHeader.startsWith('Bearer ')) {
-          return reply.code(401).send({ error: 'Unauthorized', message: 'Token no proporcionado' });
-        }
-
-        const token = authHeader.substring(7);
-        
-        const payload = verifyAccessToken(token);
-        
-        if (!payload) {
-          return reply.code(401).send({ error: 'Unauthorized', message: 'Token inválido o expirado' });
-        }
-
+        // Ahora request.user está disponible gracias al middleware
         const userRecord = await app.db.query.user.findFirst({
-          where: eq(user.id, payload.userId),
+          where: eq(user.id, request.user.userId),
         });
 
         if (!userRecord) {
@@ -576,11 +665,12 @@ export function registerAuthRoutes(app: App) {
   );
 
   /**
-   * PUT /api/auth/profile
+   * PUT /api/auth/profile - CON MIDDLEWARE REUTILIZABLE
    */
   app.fastify.put(
     '/api/auth/profile',
     {
+      preHandler: [authenticateRequest],
       schema: {
         description: 'Update current user profile',
         tags: ['auth'],
@@ -605,22 +695,8 @@ export function registerAuthRoutes(app: App) {
         },
       },
     },
-    async (request: FastifyRequest, reply: FastifyReply) => {
+    async (request: AuthenticatedRequest, reply: FastifyReply) => {
       try {
-        const authHeader = request.headers.authorization;
-        
-        if (!authHeader || !authHeader.startsWith('Bearer ')) {
-          return reply.code(401).send({ error: 'Unauthorized', message: 'Token no proporcionado' });
-        }
-
-        const token = authHeader.substring(7);
-        
-        const payload = verifyAccessToken(token);
-        
-        if (!payload) {
-          return reply.code(401).send({ error: 'Unauthorized', message: 'Token inválido o expirado' });
-        }
-
         const { name, image } = request.body as { name?: string; image?: string };
 
         let sanitizedName: string | undefined;
@@ -651,7 +727,7 @@ export function registerAuthRoutes(app: App) {
         const [updatedUser] = await app.db
           .update(user)
           .set(updateData)
-          .where(eq(user.id, payload.userId))
+          .where(eq(user.id, request.user.userId))
           .returning();
 
         if (!updatedUser) {
@@ -711,12 +787,10 @@ export function registerAuthRoutes(app: App) {
         let { refreshToken: refreshTokenString } = request.body as { refreshToken: string };
         refreshTokenString = refreshTokenString.trim().replace(/^["']|["']$/g, '');
 
-        // Buscar token exacto
         const exactMatch = await app.db.query.refreshToken.findFirst({
           where: eq(refreshToken.token, refreshTokenString),
         });
 
-        // Buscar todos los tokens del último usuario (para comparar)
         const lastTokens = await app.db.query.refreshToken.findMany({
           orderBy: (refreshToken, { desc }) => [desc(refreshToken.createdAt)],
           limit: 5
