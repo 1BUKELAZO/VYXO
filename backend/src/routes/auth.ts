@@ -178,11 +178,25 @@ export function registerAuthRoutes(app: App) {
         const refreshExpiresAt = new Date();
         refreshExpiresAt.setDate(refreshExpiresAt.getDate() + 7);
 
+        // 🔧 DEBUG: Log del token creado
+        console.log('🔐 LOGIN - Token creado:', {
+          userId: userRecord.id,
+          tokenLength: refreshTokenString.length,
+          tokenPreview: refreshTokenString.substring(0, 50) + '...',
+          expiresAt: refreshExpiresAt
+        });
+
         await app.db.insert(refreshToken).values({
           userId: userRecord.id,
           token: refreshTokenString,
           expiresAt: refreshExpiresAt,
         });
+
+        // 🔧 DEBUG: Verificar que se guardó
+        const savedToken = await app.db.query.refreshToken.findFirst({
+          where: eq(refreshToken.token, refreshTokenString),
+        });
+        console.log('💾 LOGIN - Token guardado en BD:', savedToken ? 'SÍ' : 'NO');
 
         return {
           accessToken,
@@ -290,6 +304,13 @@ export function registerAuthRoutes(app: App) {
         const refreshExpiresAt = new Date();
         refreshExpiresAt.setDate(refreshExpiresAt.getDate() + 7);
 
+        // 🔧 DEBUG: Log del token creado
+        console.log('🔐 REGISTER - Token creado:', {
+          userId: newUser.id,
+          tokenLength: refreshTokenString.length,
+          tokenPreview: refreshTokenString.substring(0, 50) + '...'
+        });
+
         await app.db.insert(refreshToken).values({
           userId: newUser.id,
           token: refreshTokenString,
@@ -313,7 +334,7 @@ export function registerAuthRoutes(app: App) {
   );
 
   /**
-   * POST /api/auth/refresh - FIXED VERSION
+   * POST /api/auth/refresh - FIXED VERSION con debug detallado
    */
   app.fastify.post(
     '/api/auth/refresh',
@@ -332,9 +353,48 @@ export function registerAuthRoutes(app: App) {
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       try {
-        const { refreshToken: refreshTokenString } = request.body as { refreshToken: string };
+        let { refreshToken: refreshTokenString } = request.body as { refreshToken: string };
 
-        // Buscar el token en la base de datos (sin validar JWT, solo verificar existencia)
+        // 🔧 FIX 1: Limpiar el token recibido (remover espacios, comillas, etc)
+        refreshTokenString = refreshTokenString.trim();
+        
+        // Si viene con comillas (algunos clientes envían JSON stringificado)
+        if (refreshTokenString.startsWith('"') && refreshTokenString.endsWith('"')) {
+          refreshTokenString = refreshTokenString.slice(1, -1);
+        }
+
+        console.log('🔄 REFRESH - Token recibido:', {
+          length: refreshTokenString.length,
+          preview: refreshTokenString.substring(0, 50) + '...',
+          last50: refreshTokenString.substring(refreshTokenString.length - 50)
+        });
+
+        // 🔧 FIX 2: Verificar que el token no esté vacío
+        if (!refreshTokenString || refreshTokenString.length < 10) {
+          console.log('❌ REFRESH - Token vacío o muy corto');
+          return reply.code(400).send({ error: 'Invalid refresh token format' });
+        }
+
+        // 🔧 FIX 3: Buscar TODOS los tokens activos del usuario primero (para debug)
+        const allActiveTokens = await app.db.query.refreshToken.findMany({
+          where: and(
+            isNull(refreshToken.revokedAt),
+            gt(refreshToken.expiresAt, new Date())
+          ),
+          limit: 10
+        });
+
+        console.log('📊 REFRESH - Tokens activos en BD:', allActiveTokens.length);
+        
+        if (allActiveTokens.length > 0) {
+          console.log('🔍 Comparando con primer token en BD:', {
+            bdLength: allActiveTokens[0].token.length,
+            bdPreview: allActiveTokens[0].token.substring(0, 50) + '...',
+            matchExacto: allActiveTokens[0].token === refreshTokenString
+          });
+        }
+
+        // 🔧 FIX 4: Buscar el token específico con comparación exacta
         const storedToken = await app.db.query.refreshToken.findFirst({
           where: and(
             eq(refreshToken.token, refreshTokenString),
@@ -344,8 +404,41 @@ export function registerAuthRoutes(app: App) {
         });
 
         if (!storedToken) {
-          return reply.code(401).send({ error: 'Refresh token not found or revoked' });
+          console.log('❌ REFRESH - Token no encontrado en BD');
+          
+          // 🔧 DEBUG: Intentar búsqueda parcial para ver si existe el token (revocado o expirado)
+          const anyToken = await app.db.query.refreshToken.findFirst({
+            where: eq(refreshToken.token, refreshTokenString),
+          });
+          
+          if (anyToken) {
+            console.log('⚠️ REFRESH - Token existe pero:', {
+              revoked: anyToken.revokedAt ? 'Sí (revocado)' : 'No',
+              expired: anyToken.expiresAt < new Date() ? 'Sí (expirado)' : 'No',
+              expiresAt: anyToken.expiresAt
+            });
+            return reply.code(401).send({ 
+              error: 'Refresh token revoked or expired',
+              details: {
+                revoked: !!anyToken.revokedAt,
+                expired: anyToken.expiresAt < new Date()
+              }
+            });
+          }
+
+          return reply.code(401).send({ 
+            error: 'Refresh token not found',
+            debug: {
+              tokenReceivedLength: refreshTokenString.length,
+              activeTokensInDB: allActiveTokens.length
+            }
+          });
         }
+
+        console.log('✅ REFRESH - Token encontrado:', {
+          userId: storedToken.userId,
+          createdAt: storedToken.createdAt
+        });
 
         // Obtener datos del usuario
         const userRecord = await app.db.query.user.findFirst({
@@ -353,16 +446,20 @@ export function registerAuthRoutes(app: App) {
         });
 
         if (!userRecord) {
+          console.log('❌ REFRESH - Usuario no encontrado:', storedToken.userId);
           return reply.code(404).send({ error: 'User not found' });
         }
 
         // Generar nuevo access token
         const newAccessToken = createAccessToken(userRecord.id, userRecord.email, userRecord.role);
 
+        console.log('✅ REFRESH - Nuevo access token generado para:', userRecord.email);
+
         return {
           accessToken: newAccessToken,
         };
       } catch (error) {
+        console.error('💥 REFRESH - Error:', error);
         app.logger.error({ err: error }, 'Refresh token error');
         throw error;
       }
@@ -389,12 +486,21 @@ export function registerAuthRoutes(app: App) {
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       try {
-        const { refreshToken: refreshTokenString } = request.body as { refreshToken: string };
+        let { refreshToken: refreshTokenString } = request.body as { refreshToken: string };
+        
+        // Limpiar token igual que en refresh
+        refreshTokenString = refreshTokenString.trim();
+        if (refreshTokenString.startsWith('"') && refreshTokenString.endsWith('"')) {
+          refreshTokenString = refreshTokenString.slice(1, -1);
+        }
 
-        await app.db
+        const result = await app.db
           .update(refreshToken)
           .set({ revokedAt: new Date() })
-          .where(eq(refreshToken.token, refreshTokenString));
+          .where(eq(refreshToken.token, refreshTokenString))
+          .returning();
+
+        console.log('👋 LOGOUT - Tokens revocados:', result.length);
 
         return { message: 'Logged out successfully' };
       } catch (error) {
@@ -579,6 +685,69 @@ export function registerAuthRoutes(app: App) {
     },
     async () => {
       return { user: null };
+    }
+  );
+
+  /**
+   * POST /api/auth/debug/tokens - ENDPOINT TEMPORAL DE DEBUG
+   */
+  app.fastify.post(
+    '/api/auth/debug/tokens',
+    {
+      schema: {
+        description: 'Debug endpoint to check tokens (REMOVE IN PRODUCTION)',
+        tags: ['debug'],
+        body: {
+          type: 'object',
+          required: ['refreshToken'],
+          properties: {
+            refreshToken: { type: 'string' },
+          },
+        },
+      },
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      try {
+        let { refreshToken: refreshTokenString } = request.body as { refreshToken: string };
+        refreshTokenString = refreshTokenString.trim().replace(/^["']|["']$/g, '');
+
+        // Buscar token exacto
+        const exactMatch = await app.db.query.refreshToken.findFirst({
+          where: eq(refreshToken.token, refreshTokenString),
+        });
+
+        // Buscar todos los tokens del último usuario (para comparar)
+        const lastTokens = await app.db.query.refreshToken.findMany({
+          orderBy: (refreshToken, { desc }) => [desc(refreshToken.createdAt)],
+          limit: 5
+        });
+
+        return {
+          input: {
+            length: refreshTokenString.length,
+            preview: refreshTokenString.substring(0, 50) + '...',
+            hash: crypto.createHash('sha256').update(refreshTokenString).digest('hex').substring(0, 16)
+          },
+          exactMatch: exactMatch ? {
+            found: true,
+            userId: exactMatch.userId,
+            revoked: !!exactMatch.revokedAt,
+            expired: exactMatch.expiresAt < new Date(),
+            expiresAt: exactMatch.expiresAt,
+            createdAt: exactMatch.createdAt
+          } : { found: false },
+          recentTokens: lastTokens.map(t => ({
+            userId: t.userId,
+            length: t.token.length,
+            preview: t.token.substring(0, 50) + '...',
+            revoked: !!t.revokedAt,
+            expired: t.expiresAt < new Date(),
+            createdAt: t.createdAt
+          }))
+        };
+      } catch (error) {
+        return reply.code(500).send({ error: 'Debug error', details: error });
+      }
     }
   );
 
