@@ -116,6 +116,26 @@ function verifyRefreshToken(token: string): JWTPayload | null {
 }
 
 // ============================================
+// TOKEN CLEANING UTILITY (NUEVO - ULTRA ROBUSTO)
+// ============================================
+
+/**
+ * Limpieza ultra robusta de tokens para manejar problemas de encoding
+ * Remueve comillas, backslashes, espacios y caracteres escapados
+ */
+function cleanToken(token: any): string | null {
+  if (!token || typeof token !== 'string') return null;
+  
+  return token
+    .trim()
+    .replace(/^["']+|["']+$/g, '')     // Remover comillas al inicio y final
+    .replace(/\\"/g, '"')               // Remover escapes de comillas
+    .replace(/\\+/g, '')                // Remover backslashes
+    .replace(/\s+/g, '')                // Remover todos los espacios/blancos
+    .trim();
+}
+
+// ============================================
 // AUTH MIDDLEWARE (REUTILIZABLE)
 // ==========================================
 
@@ -444,7 +464,7 @@ export function registerAuthRoutes(app: App) {
   );
 
   /**
-   * POST /api/auth/refresh
+   * POST /api/auth/refresh - CON CLEAN TOKEN ROBUSTO
    */
   app.fastify.post(
     '/api/auth/refresh',
@@ -463,22 +483,23 @@ export function registerAuthRoutes(app: App) {
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       try {
-        let { refreshToken: refreshTokenString } = request.body as { refreshToken: string };
+        // Usar cleanToken para manejar cualquier problema de encoding
+        const body = request.body as any;
+        let refreshTokenString = cleanToken(body.refreshToken || body.refresh_token || body.token);
         
-        refreshTokenString = refreshTokenString.trim();
-        
-        if (refreshTokenString.startsWith('"') && refreshTokenString.endsWith('"')) {
-          refreshTokenString = refreshTokenString.slice(1, -1);
+        if (!refreshTokenString) {
+          console.log('❌ REFRESH - Token no proporcionado o inválido');
+          return reply.code(400).send({ error: 'Refresh token required' });
         }
 
-        console.log('🔄 REFRESH - Token recibido:', {
+        console.log('🔄 REFRESH - Token limpio:', {
           length: refreshTokenString.length,
           preview: refreshTokenString.substring(0, 50) + '...',
           last50: refreshTokenString.substring(refreshTokenString.length - 50)
         });
 
-        if (!refreshTokenString || refreshTokenString.length < 10) {
-          console.log('❌ REFRESH - Token vacío o muy corto');
+        if (refreshTokenString.length < 50) {
+          console.log('❌ REFRESH - Token demasiado corto:', refreshTokenString.length);
           return reply.code(400).send({ error: 'Invalid refresh token format' });
         }
 
@@ -569,7 +590,7 @@ export function registerAuthRoutes(app: App) {
   );
 
   /**
-   * POST /api/auth/logout
+   * POST /api/auth/logout - CON CLEAN TOKEN ROBUSTO
    */
   app.fastify.post(
     '/api/auth/logout',
@@ -588,12 +609,19 @@ export function registerAuthRoutes(app: App) {
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       try {
-        let { refreshToken: refreshTokenString } = request.body as { refreshToken: string };
+        // Usar cleanToken para manejar cualquier problema de encoding
+        const body = request.body as any;
+        const refreshTokenString = cleanToken(body.refreshToken || body.refresh_token || body.token);
         
-        refreshTokenString = refreshTokenString.trim();
-        if (refreshTokenString.startsWith('"') && refreshTokenString.endsWith('"')) {
-          refreshTokenString = refreshTokenString.slice(1, -1);
+        if (!refreshTokenString) {
+          console.log('⚠️ LOGOUT - Token no proporcionado o inválido');
+          return { message: 'Logged out successfully' };
         }
+
+        console.log('👋 LOGOUT - Token limpio:', {
+          length: refreshTokenString.length,
+          preview: refreshTokenString.substring(0, 50)
+        });
 
         const result = await app.db
           .update(refreshToken)
@@ -639,7 +667,6 @@ export function registerAuthRoutes(app: App) {
     },
     async (request: AuthenticatedRequest, reply: FastifyReply) => {
       try {
-        // Ahora request.user está disponible gracias al middleware
         const userRecord = await app.db.query.user.findFirst({
           where: eq(user.id, request.user.userId),
         });
@@ -784,8 +811,12 @@ export function registerAuthRoutes(app: App) {
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       try {
-        let { refreshToken: refreshTokenString } = request.body as { refreshToken: string };
-        refreshTokenString = refreshTokenString.trim().replace(/^["']|["']$/g, '');
+        const body = request.body as any;
+        let refreshTokenString = cleanToken(body.refreshToken || body.refresh_token || body.token);
+        
+        if (!refreshTokenString) {
+          return reply.code(400).send({ error: 'Refresh token required' });
+        }
 
         const exactMatch = await app.db.query.refreshToken.findFirst({
           where: eq(refreshToken.token, refreshTokenString),
