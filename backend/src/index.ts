@@ -133,6 +133,182 @@ registerAdRoutes(app);
 registerAnalyticsRoutes(app);
 registerAdminRoutes(app);
 
+// 🚀 PUBLIC SEED ENDPOINT - No authentication required
+app.fastify.post(
+  '/api/seed',
+  {
+    schema: {
+      description: 'Seed sample data for testing (public endpoint)',
+      tags: ['seed'],
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            success: { type: 'boolean' },
+            message: { type: 'string' },
+            videos: { type: 'number' },
+            adCampaigns: { type: 'number' },
+            liveStreams: { type: 'number' },
+          },
+        },
+      },
+    },
+  },
+  async (request, reply) => {
+    app.logger.info('Public seed endpoint called');
+
+    try {
+      // Get first available user to associate with seeded data
+      const [firstUser] = await app.db
+        .select({ id: authSchema.user.id })
+        .from(authSchema.user)
+        .limit(1);
+
+      if (!firstUser) {
+        return reply.code(400).send({
+          success: false,
+          error: 'No users found. Please register a user first.'
+        });
+      }
+
+      const userId = firstUser.id;
+
+      // Sample videos
+      const sampleVideos = [
+        {
+          videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+          thumbnailUrl: 'https://images.unsplash.com/photo-1574158622682-e40e69881006?w=400',
+          caption: 'Amazing nature documentary 🌿 #nature #wildlife',
+          userId,
+          duration: 30,
+          status: 'ready',
+          likesCount: 0,
+          commentsCount: 0,
+          sharesCount: 0,
+          viewsCount: 0,
+          allowComments: true,
+          allowDuets: true,
+          allowStitches: true,
+        },
+        {
+          videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4',
+          thumbnailUrl: 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=400',
+          caption: 'Creative animation showcase ✨ #animation #art',
+          userId,
+          duration: 25,
+          status: 'ready',
+          likesCount: 0,
+          commentsCount: 0,
+          sharesCount: 0,
+          viewsCount: 0,
+          allowComments: true,
+          allowDuets: true,
+          allowStitches: true,
+        },
+        {
+          videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
+          thumbnailUrl: 'https://images.unsplash.com/photo-1492691527719-9d1e07e534b4?w=400',
+          caption: 'Epic adventure compilation 🎬 #adventure #travel',
+          userId,
+          duration: 20,
+          status: 'ready',
+          likesCount: 0,
+          commentsCount: 0,
+          sharesCount: 0,
+          viewsCount: 0,
+          allowComments: true,
+          allowDuets: true,
+          allowStitches: true,
+        },
+      ];
+
+      // Insert videos
+      const insertedVideos = await app.db
+        .insert(appSchema.videos)
+        .values(sampleVideos)
+        .returning();
+
+      // Sample ad campaigns
+      const sampleAds = [
+        {
+          advertiserId: userId,
+          name: 'Summer Sale Campaign',
+          budget: 1000,
+          dailyBudget: 100,
+          spent: 0,
+          status: 'active',
+          startDate: new Date(),
+          endDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+          targetAudience: { demographics: ['18-35'], interests: ['technology', 'shopping'] },
+        },
+        {
+          advertiserId: userId,
+          name: 'New Product Launch',
+          budget: 5000,
+          dailyBudget: 200,
+          spent: 0,
+          status: 'active',
+          startDate: new Date(),
+          endDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
+          targetAudience: { demographics: ['25-45'], interests: ['lifestyle', 'fashion'] },
+        },
+      ];
+
+      // Insert ad campaigns
+      const insertedAds = await app.db
+        .insert(appSchema.adCampaigns)
+        .values(sampleAds)
+        .returning();
+
+      // Sample live streams
+      const sampleStreams = [
+        {
+          userId,
+          title: 'Live Gaming Session',
+          description: 'Playing the latest games live!',
+          status: 'active',
+          streamKey: 'stream-key-1',
+          viewerCount: 0,
+        },
+        {
+          userId,
+          title: 'Q&A with Fans',
+          description: 'Ask me anything!',
+          status: 'active',
+          streamKey: 'stream-key-2',
+          viewerCount: 0,
+        },
+      ];
+
+      // Insert live streams
+      const insertedStreams = await app.db
+        .insert(appSchema.liveStreams)
+        .values(sampleStreams)
+        .returning();
+
+      app.logger.info(
+        { 
+          videos: insertedVideos.length, 
+          ads: insertedAds.length, 
+          streams: insertedStreams.length 
+        }, 
+        'Sample data seeded successfully'
+      );
+
+      return {
+        success: true,
+        message: 'Sample data created successfully',
+        videos: insertedVideos.length,
+        adCampaigns: insertedAds.length,
+        liveStreams: insertedStreams.length,
+      };
+    } catch (error) {
+      app.logger.error({ err: error }, 'Failed to seed sample data');
+      throw error;
+    }
+  }
+);
+
 // Seed initial gifts and coin packages if needed
 async function seedInitialData() {
   try {
