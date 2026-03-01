@@ -21,7 +21,7 @@ export function registerAdminRoutes(app: App) {
   /**
    * POST /api/admin/seed
    * Seed test data into the database
-   * Requires admin access
+   * TEMPORARY: Any authenticated user can access for testing
    */
   app.fastify.post(
     '/api/admin/seed',
@@ -52,7 +52,12 @@ export function registerAdminRoutes(app: App) {
       const session = await requireAuth(request, reply);
       if (!session) return;
 
-      // Allow any authenticated user to seed for testing
+      // TEMPORARY: Allow any authenticated user to seed for testing
+      // const isAdmin = await checkAdminAccess(app, session);
+      // if (!isAdmin) {
+      //   return reply.status(403).send({ error: 'Forbidden' });
+      // }
+
       app.logger.info({ userId: session.user.id }, 'Seeding test data');
 
       try {
