@@ -138,7 +138,7 @@ app.fastify.post(
   '/api/seed',
   {
     schema: {
-      description: 'Seed sample data for testing (public endpoint)',
+      description: 'Seed sample videos for testing (public endpoint)',
       tags: ['seed'],
       response: {
         200: {
@@ -147,7 +147,6 @@ app.fastify.post(
             success: { type: 'boolean' },
             message: { type: 'string' },
             videos: { type: 'number' },
-            liveStreams: { type: 'number' },
           },
         },
       },
@@ -227,48 +226,18 @@ app.fastify.post(
         .values(sampleVideos)
         .returning();
 
-      // Sample live streams
-      const sampleStreams = [
-        {
-          userId,
-          title: 'Live Gaming Session',
-          description: 'Playing the latest games live!',
-          status: 'active',
-          streamKey: 'stream-key-1',
-          viewerCount: 0,
-        },
-        {
-          userId,
-          title: 'Q&A with Fans',
-          description: 'Ask me anything!',
-          status: 'active',
-          streamKey: 'stream-key-2',
-          viewerCount: 0,
-        },
-      ];
-
-      // Insert live streams
-      const insertedStreams = await app.db
-        .insert(appSchema.liveStreams)
-        .values(sampleStreams)
-        .returning();
-
       app.logger.info(
-        { 
-          videos: insertedVideos.length, 
-          streams: insertedStreams.length 
-        }, 
-        'Sample data seeded successfully'
+        { videos: insertedVideos.length }, 
+        'Sample videos seeded successfully'
       );
 
       return {
         success: true,
-        message: 'Sample data created successfully',
+        message: 'Sample videos created successfully',
         videos: insertedVideos.length,
-        liveStreams: insertedStreams.length,
       };
     } catch (error) {
-      app.logger.error({ err: error }, 'Failed to seed sample data');
+      app.logger.error({ err: error }, 'Failed to seed sample videos');
       throw error;
     }
   }
