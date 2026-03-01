@@ -563,14 +563,13 @@ export function registerVideoRoutes(app: App) {
 
   /**
    * GET /api/videos/feed
-   * Returns videos for the feed from followed users and trending videos
-   * Requires authentication
+   * Returns videos for the feed - PUBLIC ENDPOINT (temporarily)
    */
   app.fastify.get(
     '/api/videos/feed',
     {
       schema: {
-        description: 'Get video feed for authenticated user',
+        description: 'Get video feed - Public endpoint',
         tags: ['videos'],
         response: {
           200: {
@@ -588,14 +587,7 @@ export function registerVideoRoutes(app: App) {
                 likesCount: { type: 'number' },
                 commentsCount: { type: 'number' },
                 sharesCount: { type: 'number' },
-                soundId: { type: 'string' },
-                soundTitle: { type: 'string' },
-                soundArtistName: { type: 'string' },
                 status: { type: 'string' },
-                muxPlaybackId: { type: 'string' },
-                muxThumbnailUrl: { type: 'string' },
-                masterPlaylistUrl: { type: 'string' },
-                gifUrl: { type: 'string' },
                 isLiked: { type: 'boolean' },
                 createdAt: { type: 'string' },
               },
@@ -605,115 +597,42 @@ export function registerVideoRoutes(app: App) {
       },
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
-      const session = await requireAuth(request, reply);
-      if (!session) return;
-
-      const userId = session.user.id;
-      app.logger.info({ userId }, 'Fetching video feed');
+      app.logger.info('Fetching video feed - PUBLIC');
 
       try {
-        // Get list of users that current user follows
-        const followingUsers = await app.db
-          .select({ followingId: schema.follows.followingId })
-          .from(schema.follows)
-          .where(eq(schema.follows.followerId, userId));
+        // Get ALL videos (public feed)
+        const videosData = await app.db
+          .select({
+            id: schema.videos.id,
+            userId: schema.videos.userId,
+            username: user.name,
+            avatarUrl: user.image,
+            videoUrl: schema.videos.videoUrl,
+            thumbnailUrl: schema.videos.thumbnailUrl,
+            caption: schema.videos.caption,
+            likesCount: schema.videos.likesCount,
+            commentsCount: schema.videos.commentsCount,
+            sharesCount: schema.videos.sharesCount,
+            status: schema.videos.status,
+            createdAt: schema.videos.createdAt,
+          })
+          .from(schema.videos)
+          .innerJoin(user, eq(schema.videos.userId, user.id))
+          .orderBy(desc(schema.videos.createdAt))
+          .limit(50);
 
-        const followingIds = followingUsers.map((f) => f.followingId);
-
-        // Get videos based on follows status
-        // If user has follows, show videos from followed users only
-        // If no follows, show ALL videos (For You page for new users)
-        const videosData = await (
-          followingIds.length > 0
-            ? app.db
-                .select({
-                  id: schema.videos.id,
-                  userId: schema.videos.userId,
-                  username: user.name,
-                  avatarUrl: user.image,
-                  videoUrl: schema.videos.videoUrl,
-                  thumbnailUrl: schema.videos.thumbnailUrl,
-                  caption: schema.videos.caption,
-                  likesCount: schema.videos.likesCount,
-                  commentsCount: schema.videos.commentsCount,
-                  sharesCount: schema.videos.sharesCount,
-                  soundId: schema.videos.soundId,
-                  soundTitle: schema.sounds.title,
-                  soundArtistName: schema.sounds.artistName,
-                  status: schema.videos.status,
-                  muxPlaybackId: schema.videos.muxPlaybackId,
-                  muxThumbnailUrl: schema.videos.muxThumbnailUrl,
-                  masterPlaylistUrl: schema.videos.masterPlaylistUrl,
-                  gifUrl: schema.videos.gifUrl,
-                  createdAt: schema.videos.createdAt,
-                })
-                .from(schema.videos)
-                .innerJoin(user, eq(schema.videos.userId, user.id))
-                .leftJoin(schema.sounds, eq(schema.videos.soundId, schema.sounds.id))
-                .where(inArray(schema.videos.userId, followingIds))
-                .orderBy(desc(schema.videos.createdAt))
-                .limit(50)
-            : app.db
-                .select({
-                  id: schema.videos.id,
-                  userId: schema.videos.userId,
-                  username: user.name,
-                  avatarUrl: user.image,
-                  videoUrl: schema.videos.videoUrl,
-                  thumbnailUrl: schema.videos.thumbnailUrl,
-                  caption: schema.videos.caption,
-                  likesCount: schema.videos.likesCount,
-                  commentsCount: schema.videos.commentsCount,
-                  sharesCount: schema.videos.sharesCount,
-                  soundId: schema.videos.soundId,
-                  soundTitle: schema.sounds.title,
-                  soundArtistName: schema.sounds.artistName,
-                  status: schema.videos.status,
-                  muxPlaybackId: schema.videos.muxPlaybackId,
-                  muxThumbnailUrl: schema.videos.muxThumbnailUrl,
-                  masterPlaylistUrl: schema.videos.masterPlaylistUrl,
-                  gifUrl: schema.videos.gifUrl,
-                  createdAt: schema.videos.createdAt,
-                })
-                .from(schema.videos)
-                .innerJoin(user, eq(schema.videos.userId, user.id))
-                .leftJoin(schema.sounds, eq(schema.videos.soundId, schema.sounds.id))
-                .orderBy(desc(schema.videos.createdAt))
-                .limit(50)
-        );
-
-        // Get likes for current user on these videos
-        const videoIds = videosData.map((v) => v.id);
-        let userLikes: any[] = [];
-
-        // Only query likes if we have videos to check
-        if (videoIds.length > 0) {
-          userLikes = await app.db
-            .select({ videoId: schema.likes.videoId })
-            .from(schema.likes)
-            .where(
-              and(
-                eq(schema.likes.userId, userId),
-                inArray(schema.likes.videoId, videoIds)
-              )
-            );
-        }
-
-        const likedVideoIds = new Set(userLikes.map((l) => l.videoId));
-
-        // Map likes to videos and use Mux URLs when ready
+        // Map videos (no likes check for public endpoint)
         const feed = videosData.map((video) => ({
           ...video,
           avatarUrl: video.avatarUrl || null,
-          // Use HLS master playlist if video is ready from Mux, fallback to original URL
-          videoUrl: video.status === 'ready' && video.masterPlaylistUrl ? video.masterPlaylistUrl : video.videoUrl,
-          isLiked: likedVideoIds.has(video.id),
+          videoUrl: video.videoUrl,
+          isLiked: false, // Default to false for public endpoint
         }));
 
-        app.logger.info({ userId, count: feed.length }, 'Video feed fetched successfully');
+        app.logger.info({ count: feed.length }, 'Video feed fetched successfully');
         return feed;
       } catch (error) {
-        app.logger.error({ err: error, userId }, 'Failed to fetch video feed');
+        app.logger.error({ err: error }, 'Failed to fetch video feed');
         throw error;
       }
     }
@@ -978,8 +897,8 @@ export function registerVideoRoutes(app: App) {
         // Sample videos
         const sampleVideos = [
           {
-            videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-            thumbnailUrl: 'https://images.unsplash.com/photo-1574158622682-e40e69881006?w=400',
+            videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4 ',
+            thumbnailUrl: 'https://images.unsplash.com/photo-1574158622682-e40e69881006?w=400 ',
             caption: 'Amazing nature documentary 🌿 #nature #wildlife',
             userId,
             duration: 30,
@@ -993,8 +912,8 @@ export function registerVideoRoutes(app: App) {
             allowStitches: true,
           },
           {
-            videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4',
-            thumbnailUrl: 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=400',
+            videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4 ',
+            thumbnailUrl: 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=400 ',
             caption: 'Creative animation showcase ✨ #animation #art',
             userId,
             duration: 25,
@@ -1008,8 +927,8 @@ export function registerVideoRoutes(app: App) {
             allowStitches: true,
           },
           {
-            videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
-            thumbnailUrl: 'https://images.unsplash.com/photo-1492691527719-9d1e07e534b4?w=400',
+            videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4 ',
+            thumbnailUrl: 'https://images.unsplash.com/photo-1492691527719-9d1e07e534b4?w=400 ',
             caption: 'Epic adventure compilation 🎬 #adventure #travel',
             userId,
             duration: 20,
