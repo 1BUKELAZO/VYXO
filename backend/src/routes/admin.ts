@@ -1274,3 +1274,4 @@ export function registerAdminRoutes(app: App) {
     }
   );
 }
+// Force rebuild - 2026-03-01
