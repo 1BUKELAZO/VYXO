@@ -147,7 +147,6 @@ app.fastify.post(
             success: { type: 'boolean' },
             message: { type: 'string' },
             videos: { type: 'number' },
-            adCampaigns: { type: 'number' },
             liveStreams: { type: 'number' },
           },
         },
@@ -228,38 +227,6 @@ app.fastify.post(
         .values(sampleVideos)
         .returning();
 
-      // Sample ad campaigns
-      const sampleAds = [
-        {
-          advertiserId: userId,
-          name: 'Summer Sale Campaign',
-          budget: 1000,
-          dailyBudget: 100,
-          spent: 0,
-          status: 'active',
-          startDate: new Date(),
-          endDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-          targetAudience: { demographics: ['18-35'], interests: ['technology', 'shopping'] },
-        },
-        {
-          advertiserId: userId,
-          name: 'New Product Launch',
-          budget: 5000,
-          dailyBudget: 200,
-          spent: 0,
-          status: 'active',
-          startDate: new Date(),
-          endDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
-          targetAudience: { demographics: ['25-45'], interests: ['lifestyle', 'fashion'] },
-        },
-      ];
-
-      // Insert ad campaigns
-      const insertedAds = await app.db
-        .insert(appSchema.adCampaigns)
-        .values(sampleAds)
-        .returning();
-
       // Sample live streams
       const sampleStreams = [
         {
@@ -289,7 +256,6 @@ app.fastify.post(
       app.logger.info(
         { 
           videos: insertedVideos.length, 
-          ads: insertedAds.length, 
           streams: insertedStreams.length 
         }, 
         'Sample data seeded successfully'
@@ -299,7 +265,6 @@ app.fastify.post(
         success: true,
         message: 'Sample data created successfully',
         videos: insertedVideos.length,
-        adCampaigns: insertedAds.length,
         liveStreams: insertedStreams.length,
       };
     } catch (error) {
