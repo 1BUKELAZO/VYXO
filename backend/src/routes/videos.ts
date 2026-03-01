@@ -944,14 +944,14 @@ export function registerVideoRoutes(app: App) {
 
   /**
    * POST /api/videos/seed
-   * Seeds 3 sample videos for testing
+   * Seeds sample data for testing (videos, ads, live streams)
    * Protected endpoint (requires authentication)
    */
   app.fastify.post(
     '/api/videos/seed',
     {
       schema: {
-        description: 'Seed sample videos for testing',
+        description: 'Seed sample data for testing',
         tags: ['videos'],
         response: {
           200: {
@@ -959,18 +959,9 @@ export function registerVideoRoutes(app: App) {
             properties: {
               success: { type: 'boolean' },
               message: { type: 'string' },
-              videos: {
-                type: 'array',
-                items: {
-                  type: 'object',
-                  properties: {
-                    id: { type: 'string' },
-                    video_url: { type: 'string' },
-                    thumbnail_url: { type: 'string' },
-                    caption: { type: 'string' },
-                  },
-                },
-              },
+              videos: { type: 'number' },
+              adCampaigns: { type: 'number' },
+              liveStreams: { type: 'number' },
             },
           },
         },
@@ -981,63 +972,141 @@ export function registerVideoRoutes(app: App) {
       if (!session) return;
 
       const userId = session.user.id;
-      app.logger.info({ userId }, 'Seeding sample videos');
+      app.logger.info({ userId }, 'Seeding sample data');
 
       try {
+        // Sample videos
         const sampleVideos = [
           {
             videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
             thumbnailUrl: 'https://images.unsplash.com/photo-1574158622682-e40e69881006?w=400',
             caption: 'Amazing nature documentary 🌿 #nature #wildlife',
             userId,
+            duration: 30,
+            status: 'ready',
             likesCount: 0,
             commentsCount: 0,
             sharesCount: 0,
+            viewsCount: 0,
+            allowComments: true,
+            allowDuets: true,
+            allowStitches: true,
           },
           {
             videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4',
             thumbnailUrl: 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=400',
             caption: 'Creative animation showcase ✨ #animation #art',
             userId,
+            duration: 25,
+            status: 'ready',
             likesCount: 0,
             commentsCount: 0,
             sharesCount: 0,
+            viewsCount: 0,
+            allowComments: true,
+            allowDuets: true,
+            allowStitches: true,
           },
           {
             videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
             thumbnailUrl: 'https://images.unsplash.com/photo-1492691527719-9d1e07e534b4?w=400',
             caption: 'Epic adventure compilation 🎬 #adventure #travel',
             userId,
+            duration: 20,
+            status: 'ready',
             likesCount: 0,
             commentsCount: 0,
             sharesCount: 0,
+            viewsCount: 0,
+            allowComments: true,
+            allowDuets: true,
+            allowStitches: true,
           },
         ];
 
-        // Insert all videos
+        // Insert videos
         const insertedVideos = await app.db
           .insert(schema.videos)
           .values(sampleVideos)
           .returning();
 
-        const insertedVideoArray = Array.isArray(insertedVideos) ? insertedVideos : [];
+        // Sample ad campaigns
+        const sampleAds = [
+          {
+            advertiserId: userId,
+            name: 'Summer Sale Campaign',
+            budget: 1000,
+            dailyBudget: 100,
+            spent: 0,
+            status: 'active',
+            startDate: new Date(),
+            endDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+            targetAudience: { demographics: ['18-35'], interests: ['technology', 'shopping'] },
+          },
+          {
+            advertiserId: userId,
+            name: 'New Product Launch',
+            budget: 5000,
+            dailyBudget: 200,
+            spent: 0,
+            status: 'active',
+            startDate: new Date(),
+            endDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
+            targetAudience: { demographics: ['25-45'], interests: ['lifestyle', 'fashion'] },
+          },
+        ];
 
-        app.logger.info({ userId, videoCount: insertedVideoArray.length }, 'Sample videos seeded successfully');
+        // Insert ad campaigns
+        const insertedAds = await app.db
+          .insert(schema.adCampaigns)
+          .values(sampleAds)
+          .returning();
 
-        const response = {
+        // Sample live streams
+        const sampleStreams = [
+          {
+            userId,
+            title: 'Live Gaming Session',
+            description: 'Playing the latest games live!',
+            status: 'active',
+            streamKey: 'stream-key-1',
+            viewerCount: 0,
+          },
+          {
+            userId,
+            title: 'Q&A with Fans',
+            description: 'Ask me anything!',
+            status: 'active',
+            streamKey: 'stream-key-2',
+            viewerCount: 0,
+          },
+        ];
+
+        // Insert live streams
+        const insertedStreams = await app.db
+          .insert(schema.liveStreams)
+          .values(sampleStreams)
+          .returning();
+
+        app.logger.info(
+          { 
+            userId, 
+            videos: insertedVideos.length, 
+            ads: insertedAds.length, 
+            streams: insertedStreams.length 
+          }, 
+          'Sample data seeded successfully'
+        );
+
+        return {
           success: true,
-          message: `${insertedVideoArray.length} sample videos created successfully`,
-          videos: insertedVideoArray.map((video) => ({
-            id: video.id,
-            video_url: video.videoUrl,
-            thumbnail_url: video.thumbnailUrl,
-            caption: video.caption,
-          })),
+          message: 'Sample data created successfully',
+          videos: insertedVideos.length,
+          adCampaigns: insertedAds.length,
+          liveStreams: insertedStreams.length,
         };
-
-        return response;
       } catch (error) {
-        app.logger.error({ err: error, userId }, 'Failed to seed sample videos');
+        app.logger.error({ err: error, userId }, 'Failed to seed sample data');
         throw error;
       }
     }
