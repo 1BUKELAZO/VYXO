@@ -1,39 +1,204 @@
 import type { App } from '../index.js';
 import type { FastifyRequest, FastifyReply } from 'fastify';
-import { eq, and, desc, sql, ilike, or, gt, gte, lte, ne } from 'drizzle-orm';
+import { eq, and, desc, sql, ilike, or } from 'drizzle-orm';
 import * as schema from '../db/schema.js';
 import { user } from '../db/auth-schema.js';
 
-// Utility function to check admin access
-async function checkAdminAccess(
-  app: App,
-  session: any
-): Promise<boolean> {
-  if (!session || !session.user) return false;
-
-  const adminUser = await app.db
+// Helper function to check admin access
+async function checkAdminAccess(app: App, session: any): Promise<boolean> {
+  const userData = await app.db
     .select({ role: user.role })
     .from(user)
     .where(eq(user.id, session.user.id))
     .then((res) => res[0]);
-
-  return adminUser?.role === 'admin';
+  
+  return userData?.role === 'admin';
 }
 
 export function registerAdminRoutes(app: App) {
   const requireAuth = app.requireAuth();
 
   /**
+   * POST /api/admin/seed
+   * Seed test data into the database
+   * Requires admin access
+   */
+  app.fastify.post(
+    '/api/admin/seed',
+    {
+      schema: {
+        description: 'Seed test data into the database',
+        tags: ['admin'],
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              success: { type: 'boolean' },
+              message: { type: 'string' },
+              data: {
+                type: 'object',
+                properties: {
+                  videos: { type: 'number' },
+                  campaigns: { type: 'number' },
+                  streams: { type: 'number' },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const session = await requireAuth(request, reply);
+      if (!session) return;
+
+      // Allow any authenticated user to seed for testing
+      app.logger.info({ userId: session.user.id }, 'Seeding test data');
+
+      try {
+        const userId = session.user.id;
+
+        // Check if test data already exists
+        const existingVideos = await app.db
+          .select({ count: sql<number>`count(*)` })
+          .from(schema.videos)
+          .where(eq(schema.videos.userId, userId));
+
+        if (existingVideos[0]?.count > 0) {
+          return reply.send({
+            success: true,
+            message: 'Test data already exists for this user',
+            data: { videos: existingVideos[0].count, campaigns: 0, streams: 0 },
+          });
+        }
+
+        // Insert test videos
+        const testVideos = await app.db
+          .insert(schema.videos)
+          .values([
+            {
+              userId,
+              caption: '🎬 Video de prueba #1 - Bienvenido a VYXO! 🚀',
+              videoUrl: 'https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4',
+              thumbnailUrl: 'https://peach.blender.org/wp-content/uploads/title_anouncement.jpg',
+              duration: 10,
+              status: 'ready',
+              viewsCount: 150,
+              likesCount: 50,
+              commentsCount: 10,
+              sharesCount: 5,
+            },
+            {
+              userId,
+              caption: '🎵 Video de prueba #2 - Música y diversión 🎶',
+              videoUrl: 'https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4',
+              thumbnailUrl: 'https://peach.blender.org/wp-content/uploads/title_anouncement.jpg',
+              duration: 15,
+              status: 'ready',
+              viewsCount: 230,
+              likesCount: 89,
+              commentsCount: 23,
+              sharesCount: 12,
+            },
+            {
+              userId,
+              caption: '🔥 Video trending - No te lo pierdas! #trending',
+              videoUrl: 'https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4',
+              thumbnailUrl: 'https://peach.blender.org/wp-content/uploads/title_anouncement.jpg',
+              duration: 20,
+              status: 'ready',
+              viewsCount: 500,
+              likesCount: 200,
+              commentsCount: 45,
+              sharesCount: 30,
+            },
+          ])
+          .returning();
+
+        // Insert test ad campaign
+        const testCampaign = await app.db
+          .insert(schema.adCampaigns)
+          .values({
+            advertiserId: userId,
+            name: 'Campaña de prueba VYXO',
+            budget: '1000',
+            spent: '0',
+            status: 'active',
+            creativeUrl: 'https://via.placeholder.com/400x600/FF0050/FFFFFF?text=VYXO+Ad',
+            ctaText: 'Descargar ahora',
+            ctaUrl: 'https://vyxo.app',
+            targetAudience: { age_range: '18-35', interests: ['tech', 'social'] },
+          })
+          .returning();
+
+        // Insert test live stream
+        const testStream = await app.db
+          .insert(schema.liveStreams)
+          .values({
+            userId,
+            title: '🔴 En vivo - Stream de prueba',
+            streamUrl: 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8',
+            isActive: true,
+            viewerCount: 42,
+          })
+          .returning();
+
+        app.logger.info(
+          {
+            userId,
+            videosCount: testVideos.length,
+            campaignsCount: testCampaign.length,
+            streamsCount: testStream.length,
+          },
+          'Test data seeded successfully'
+        );
+
+        return reply.send({
+          success: true,
+          message: 'Test data seeded successfully',
+          data: {
+            videos: testVideos.length,
+            campaigns: testCampaign.length,
+            streams: testStream.length,
+          },
+        });
+      } catch (error) {
+        app.logger.error({ err: error, userId: session.user.id }, 'Failed to seed test data');
+        return reply.status(500).send({
+          success: false,
+          message: 'Failed to seed test data',
+          error: error instanceof Error ? error.message : 'Unknown error',
+        });
+      }
+    }
+  );
+
+  /**
    * GET /api/admin/dashboard
-   * Platform metrics and overview
+   * Admin dashboard statistics
    * Requires admin access
    */
   app.fastify.get(
     '/api/admin/dashboard',
     {
       schema: {
-        description: 'Get admin dashboard metrics',
+        description: 'Get admin dashboard statistics',
         tags: ['admin'],
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              totalUsers: { type: 'number' },
+              totalVideos: { type: 'number' },
+              pendingReports: { type: 'number' },
+              dau: { type: 'number' },
+              mau: { type: 'number' },
+              videosToday: { type: 'number' },
+              reportsToday: { type: 'number' },
+              creatorApplicationsPending: { type: 'number' },
+            },
+          },
+        },
       },
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
@@ -42,24 +207,23 @@ export function registerAdminRoutes(app: App) {
 
       const isAdmin = await checkAdminAccess(app, session);
       if (!isAdmin) {
-        app.logger.warn({ userId: session.user.id }, 'Unauthorized admin access attempt');
         return reply.status(403).send({ error: 'Forbidden' });
       }
 
-      app.logger.info({ userId: session.user.id }, 'Getting admin dashboard');
+      app.logger.info({ userId: session.user.id }, 'Fetching admin dashboard');
 
       try {
         // Total users
-        const totalUsersResult = await app.db
+        const usersResult = await app.db
           .select({ count: sql<number>`count(*)` })
           .from(user);
-        const totalUsers = totalUsersResult[0]?.count || 0;
+        const totalUsers = usersResult[0]?.count || 0;
 
         // Total videos
-        const totalVideosResult = await app.db
+        const videosResult = await app.db
           .select({ count: sql<number>`count(*)` })
           .from(schema.videos);
-        const totalVideos = totalVideosResult[0]?.count || 0;
+        const totalVideos = videosResult[0]?.count || 0;
 
         // Pending reports
         const pendingReportsResult = await app.db
@@ -74,7 +238,7 @@ export function registerAdminRoutes(app: App) {
         const dauResult = await app.db
           .select({ count: sql<number>`count(distinct ${schema.analyticsEvents.userId})` })
           .from(schema.analyticsEvents)
-          .where(gte(schema.analyticsEvents.createdAt, oneDayAgo));
+          .where(sql`${schema.analyticsEvents.createdAt} >= ${oneDayAgo}`);
         const dau = dauResult[0]?.count || 0;
 
         // MAU (monthly active users)
@@ -82,23 +246,23 @@ export function registerAdminRoutes(app: App) {
         const mauResult = await app.db
           .select({ count: sql<number>`count(distinct ${schema.analyticsEvents.userId})` })
           .from(schema.analyticsEvents)
-          .where(gte(schema.analyticsEvents.createdAt, thirtyDaysAgo));
+          .where(sql`${schema.analyticsEvents.createdAt} >= ${thirtyDaysAgo}`);
         const mau = mauResult[0]?.count || 0;
 
         // Videos uploaded today
         const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-        const videosResult = await app.db
+        const videosTodayResult = await app.db
           .select({ count: sql<number>`count(*)` })
           .from(schema.videos)
-          .where(gte(schema.videos.createdAt, todayStart));
-        const videosToday = videosResult[0]?.count || 0;
+          .where(sql`${schema.videos.createdAt} >= ${todayStart}`);
+        const videosToday = videosTodayResult[0]?.count || 0;
 
         // Reports today
-        const reportsResult = await app.db
+        const reportsTodayResult = await app.db
           .select({ count: sql<number>`count(*)` })
           .from(schema.reports)
-          .where(gte(schema.reports.createdAt, todayStart));
-        const reportsToday = reportsResult[0]?.count || 0;
+          .where(sql`${schema.reports.createdAt} >= ${todayStart}`);
+        const reportsToday = reportsTodayResult[0]?.count || 0;
 
         // Creator applications pending
         const creatorAppsResult = await app.db
@@ -203,7 +367,7 @@ export function registerAdminRoutes(app: App) {
             role: user.role,
             isBanned: user.isBanned,
             createdAt: user.createdAt,
-            videosCount: sql<number>`(select count(*) from ${schema.videos} where ${schema.videos.creatorId} = ${user.id})`,
+            videosCount: sql<number>`(select count(*) from ${schema.videos} where ${schema.videos.userId} = ${user.id})`,
             followersCount: sql<number>`(select count(*) from ${schema.follows} where ${schema.follows.followingId} = ${user.id})`,
           })
           .from(user)
@@ -275,7 +439,7 @@ export function registerAdminRoutes(app: App) {
         const userVideos = await app.db
           .select()
           .from(schema.videos)
-          .where(eq(schema.videos.creatorId, userId))
+          .where(eq(schema.videos.userId, userId))
           .orderBy(desc(schema.videos.createdAt))
           .limit(10);
 
@@ -488,7 +652,7 @@ export function registerAdminRoutes(app: App) {
         const videos = await app.db
           .select({
             id: schema.videos.id,
-            userId: schema.videos.creatorId,
+            userId: schema.videos.userId,
             username: user.name,
             caption: schema.videos.caption,
             thumbnailUrl: schema.videos.thumbnailUrl,
@@ -498,7 +662,7 @@ export function registerAdminRoutes(app: App) {
             status: schema.videos.status,
           })
           .from(schema.videos)
-          .innerJoin(user, eq(schema.videos.creatorId, user.id))
+          .innerJoin(user, eq(schema.videos.userId, user.id))
           .where(whereCondition)
           .orderBy(desc(schema.videos.createdAt))
           .limit(limit)
@@ -567,7 +731,7 @@ export function registerAdminRoutes(app: App) {
         const creatorInfo = await app.db
           .select()
           .from(user)
-          .where(eq(user.id, videoDetails.creatorId))
+          .where(eq(user.id, videoDetails.userId))
           .then((res) => res[0]);
 
         // Get reports related to this video
@@ -980,7 +1144,7 @@ export function registerAdminRoutes(app: App) {
             email: user.email,
             status: schema.creatorApplications.status,
             appliedAt: schema.creatorApplications.appliedAt,
-            videosCount: sql<number>`(select count(*) from ${schema.videos} where ${schema.videos.creatorId} = ${schema.creatorApplications.userId})`,
+            videosCount: sql<number>`(select count(*) from ${schema.videos} where ${schema.videos.userId} = ${schema.creatorApplications.userId})`,
             followersCount: sql<number>`(select count(*) from ${schema.follows} where ${schema.follows.followingId} = ${schema.creatorApplications.userId})`,
           })
           .from(schema.creatorApplications)
