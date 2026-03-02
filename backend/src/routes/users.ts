@@ -10,13 +10,13 @@ export function registerUserRoutes(app: App) {
   /**
    * GET /api/users/:id
    * Returns user profile with follower/following counts and like stats
-   * Requires authentication to check if current user follows this user
+   * PUBLIC ENDPOINT (temporarily - requires auth to check isFollowing)
    */
   app.fastify.get(
     '/api/users/:id',
     {
       schema: {
-        description: 'Get user profile',
+        description: 'Get user profile - Public endpoint',
         tags: ['users'],
         params: {
           type: 'object',
@@ -43,13 +43,23 @@ export function registerUserRoutes(app: App) {
       },
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
-      const session = await requireAuth(request, reply);
-      if (!session) return;
+      // TEMPORARY: Try to get session, but don't require it
+      let currentUserId: string | null = null;
+      try {
+        const authHeader = request.headers.authorization;
+        if (authHeader && authHeader.startsWith('Bearer ')) {
+          const token = authHeader.substring(7).trim();
+          // TODO: Verify token properly when JWT is fixed
+          // For now, just extract userId if possible or leave null
+          currentUserId = null; // Will be implemented when JWT works
+        }
+      } catch {
+        // Ignore auth errors for public endpoint
+      }
 
       const { id: profileUserId } = request.params as { id: string };
-      const currentUserId = session.user.id;
 
-      app.logger.info({ profileUserId, currentUserId }, 'Fetching user profile');
+      app.logger.info({ profileUserId, currentUserId }, 'Fetching user profile (public)');
 
       try {
         // Get user profile
@@ -80,10 +90,14 @@ export function registerUserRoutes(app: App) {
           .from(schema.videos)
           .where(eq(schema.videos.userId, profileUserId));
 
-        // Check if current user follows this user
-        const isFollowing = await app.db.query.follows.findFirst({
-          where: and(eq(schema.follows.followerId, currentUserId), eq(schema.follows.followingId, profileUserId)),
-        });
+        // Check if current user follows this user (only if authenticated)
+        let isFollowing = false;
+        if (currentUserId) {
+          const followRecord = await app.db.query.follows.findFirst({
+            where: and(eq(schema.follows.followerId, currentUserId), eq(schema.follows.followingId, profileUserId)),
+          });
+          isFollowing = !!followRecord;
+        }
 
         app.logger.info(
           {
@@ -92,7 +106,7 @@ export function registerUserRoutes(app: App) {
             followingCount: following || 0,
             totalLikes: totalLikes || 0,
           },
-          'User profile fetched successfully'
+          'User profile fetched successfully (public)'
         );
 
         return {
@@ -104,7 +118,7 @@ export function registerUserRoutes(app: App) {
           followersCount: Number(followers) || 0,
           followingCount: Number(following) || 0,
           likesCount: Number(totalLikes) || 0,
-          isFollowing: !!isFollowing,
+          isFollowing: isFollowing,
         };
       } catch (error) {
         app.logger.error({ err: error, profileUserId }, 'Failed to fetch user profile');
