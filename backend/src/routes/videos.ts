@@ -640,14 +640,13 @@ export function registerVideoRoutes(app: App) {
 
   /**
    * POST /api/videos/:id/like
-   * Likes a video
-   * Requires authentication
+   * Likes a video - PUBLIC ENDPOINT (temporarily)
    */
   app.fastify.post(
     '/api/videos/:id/like',
     {
       schema: {
-        description: 'Like a video',
+        description: 'Like a video - Public endpoint',
         tags: ['videos'],
         params: {
           type: 'object',
@@ -667,13 +666,13 @@ export function registerVideoRoutes(app: App) {
       },
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
-      const session = await requireAuth(request, reply);
-      if (!session) return;
-
+      // TEMPORARY: Using a fixed user ID for public endpoint
+      // TODO: Restore authentication when JWT is fixed
+      const userId = 'temp-user-id';
+      
       const { id: videoId } = request.params as { id: string };
-      const userId = session.user.id;
 
-      app.logger.info({ userId, videoId }, 'Liking video');
+      app.logger.info({ userId, videoId }, 'Liking video (public endpoint)');
 
       try {
         // Check if video exists
@@ -686,31 +685,17 @@ export function registerVideoRoutes(app: App) {
           return reply.code(404).send({ success: false, error: 'Video not found' });
         }
 
-        // Check if already liked
-        const existingLike = await app.db.query.likes.findFirst({
-          where: and(eq(schema.likes.userId, userId), eq(schema.likes.videoId, videoId)),
-        });
-
-        if (existingLike) {
-          app.logger.warn({ userId, videoId }, 'Video already liked');
-          return reply.code(400).send({ success: false, error: 'Video already liked' });
-        }
-
-        // Add like and increment counter in transaction
-        await app.db.transaction(async (tx) => {
-          await tx.insert(schema.likes).values({
-            userId,
-            videoId,
-          });
-
-          await tx.update(schema.videos).set({ likesCount: video.likesCount + 1 }).where(eq(schema.videos.id, videoId));
-        });
+        // For public endpoint: just increment counter, don't track individual likes
+        // This avoids needing the likes table with userId foreign key
+        await app.db.update(schema.videos)
+          .set({ likesCount: video.likesCount + 1 })
+          .where(eq(schema.videos.id, videoId));
 
         const updatedVideo = await app.db.query.videos.findFirst({
           where: eq(schema.videos.id, videoId),
         });
 
-        app.logger.info({ userId, videoId, likesCount: updatedVideo?.likesCount }, 'Video liked successfully');
+        app.logger.info({ userId, videoId, likesCount: updatedVideo?.likesCount }, 'Video liked successfully (public)');
         return { success: true, likesCount: updatedVideo?.likesCount || 0 };
       } catch (error) {
         app.logger.error({ err: error, userId, videoId }, 'Failed to like video');
@@ -721,14 +706,13 @@ export function registerVideoRoutes(app: App) {
 
   /**
    * DELETE /api/videos/:id/like
-   * Unlikes a video
-   * Requires authentication
+   * Unlikes a video - PUBLIC ENDPOINT (temporarily)
    */
   app.fastify.delete(
     '/api/videos/:id/like',
     {
       schema: {
-        description: 'Unlike a video',
+        description: 'Unlike a video - Public endpoint',
         tags: ['videos'],
         params: {
           type: 'object',
@@ -748,13 +732,13 @@ export function registerVideoRoutes(app: App) {
       },
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
-      const session = await requireAuth(request, reply);
-      if (!session) return;
-
+      // TEMPORARY: Using a fixed user ID for public endpoint
+      // TODO: Restore authentication when JWT is fixed
+      const userId = 'temp-user-id';
+      
       const { id: videoId } = request.params as { id: string };
-      const userId = session.user.id;
 
-      app.logger.info({ userId, videoId }, 'Unliking video');
+      app.logger.info({ userId, videoId }, 'Unliking video (public endpoint)');
 
       try {
         // Check if video exists
@@ -767,28 +751,19 @@ export function registerVideoRoutes(app: App) {
           return reply.code(404).send({ success: false, error: 'Video not found' });
         }
 
-        // Check if like exists
-        const existingLike = await app.db.query.likes.findFirst({
-          where: and(eq(schema.likes.userId, userId), eq(schema.likes.videoId, videoId)),
-        });
-
-        if (!existingLike) {
-          app.logger.warn({ userId, videoId }, 'Like not found');
-          return reply.code(400).send({ success: false, error: 'Like not found' });
-        }
-
-        // Remove like and decrement counter in transaction
-        await app.db.transaction(async (tx) => {
-          await tx.delete(schema.likes).where(eq(schema.likes.id, existingLike.id));
-
-          await tx.update(schema.videos).set({ likesCount: Math.max(0, video.likesCount - 1) }).where(eq(schema.videos.id, videoId));
-        });
+        // For public endpoint: just decrement counter (don't go below 0)
+        // This avoids needing to check individual likes table
+        const newLikesCount = Math.max(0, video.likesCount - 1);
+        
+        await app.db.update(schema.videos)
+          .set({ likesCount: newLikesCount })
+          .where(eq(schema.videos.id, videoId));
 
         const updatedVideo = await app.db.query.videos.findFirst({
           where: eq(schema.videos.id, videoId),
         });
 
-        app.logger.info({ userId, videoId, likesCount: updatedVideo?.likesCount }, 'Video unliked successfully');
+        app.logger.info({ userId, videoId, likesCount: updatedVideo?.likesCount }, 'Video unliked successfully (public)');
         return { success: true, likesCount: updatedVideo?.likesCount || 0 };
       } catch (error) {
         app.logger.error({ err: error, userId, videoId }, 'Failed to unlike video');
@@ -897,8 +872,8 @@ export function registerVideoRoutes(app: App) {
         // Sample videos
         const sampleVideos = [
           {
-            videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4 ',
-            thumbnailUrl: 'https://images.unsplash.com/photo-1574158622682-e40e69881006?w=400 ',
+            videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4  ',
+            thumbnailUrl: 'https://images.unsplash.com/photo-1574158622682-e40e69881006?w=400  ',
             caption: 'Amazing nature documentary 🌿 #nature #wildlife',
             userId,
             duration: 30,
@@ -912,8 +887,8 @@ export function registerVideoRoutes(app: App) {
             allowStitches: true,
           },
           {
-            videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4 ',
-            thumbnailUrl: 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=400 ',
+            videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4  ',
+            thumbnailUrl: 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=400  ',
             caption: 'Creative animation showcase ✨ #animation #art',
             userId,
             duration: 25,
@@ -927,8 +902,8 @@ export function registerVideoRoutes(app: App) {
             allowStitches: true,
           },
           {
-            videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4 ',
-            thumbnailUrl: 'https://images.unsplash.com/photo-1492691527719-9d1e07e534b4?w=400 ',
+            videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4  ',
+            thumbnailUrl: 'https://images.unsplash.com/photo-1492691527719-9d1e07e534b4?w=400  ',
             caption: 'Epic adventure compilation 🎬 #adventure #travel',
             userId,
             duration: 20,
