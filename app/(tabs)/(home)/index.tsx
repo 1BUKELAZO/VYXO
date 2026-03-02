@@ -1,4 +1,3 @@
-
 import {
   View,
   StyleSheet,
@@ -33,7 +32,6 @@ import Animated, {
   withTiming,
   Easing,
 } from 'react-native-reanimated';
-import { GestureDetector, Gesture } from 'react-native-gesture-handler';
 import { colors } from '@/styles/commonStyles';
 import { useFeedAlgorithm, Video, FeedItem, AdItem } from '@/hooks/useFeedAlgorithm';
 import { useLiveStream, LiveStream } from '@/hooks/useLiveStream';
@@ -155,6 +153,10 @@ const VideoItem = ({ video, isActive, onView }: VideoItemProps) => {
   const [localVideo, setLocalVideo] = useState(video);
   const [viewRecorded, setViewRecorded] = useState(false);
   const muxPlayerRef = useRef<any>(null);
+  const isMountedRef = useRef(true);
+  const isTogglingRef = useRef(false);
+  const lastTapRef = useRef(0);
+  const viewTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const useMuxPlayer = (!!video.muxPlaybackId && video.status === 'ready') || !!video.masterPlaylistUrl;
   
@@ -167,100 +169,176 @@ const VideoItem = ({ video, isActive, onView }: VideoItemProps) => {
     player.muted = false;
   });
 
+  // Cleanup on unmount
   useEffect(() => {
-    if (isActive) {
-      setIsPlaying(true);
-      rotation.value = withRepeat(
-        withTiming(360, { duration: 3000, easing: Easing.linear }),
-        -1,
-        false
-      );
-
-      if (!viewRecorded) {
-        const viewTimer = setTimeout(() => {
-          console.log('Recording view for video:', video.id);
-          onView(video.id);
-          setViewRecorded(true);
-        }, 2000);
-
-        return () => clearTimeout(viewTimer);
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      if (viewTimerRef.current) {
+        clearTimeout(viewTimerRef.current);
       }
-
-      if (useMuxPlayer && muxPlayerRef.current) {
-        muxPlayerRef.current.play();
-      } else if (!useMuxPlayer) {
-        player.play();
+      // Safe cleanup of player
+      try {
+        if (useMuxPlayer && muxPlayerRef.current) {
+          muxPlayerRef.current.pause?.();
+        } else if (!useMuxPlayer && player) {
+          player.pause();
+        }
+      } catch (e) {
+        // Ignore cleanup errors
       }
-    } else {
-      setIsPlaying(false);
-      rotation.value = 0;
+    };
+  }, [useMuxPlayer, player]);
 
-      if (useMuxPlayer && muxPlayerRef.current) {
-        muxPlayerRef.current.pause();
-      } else if (!useMuxPlayer) {
-        player.pause();
+  // Handle play/pause based on active state
+  useEffect(() => {
+    if (!isMountedRef.current) return;
+
+    // Debounce state changes
+    const timeout = setTimeout(() => {
+      if (!isMountedRef.current) return;
+
+      try {
+        if (isActive) {
+          setIsPlaying(true);
+          rotation.value = withRepeat(
+            withTiming(360, { duration: 3000, easing: Easing.linear }),
+            -1,
+            false
+          );
+
+          if (!viewRecorded) {
+            viewTimerRef.current = setTimeout(() => {
+              if (isMountedRef.current) {
+                console.log('Recording view for video:', video.id);
+                onView(video.id);
+                setViewRecorded(true);
+              }
+            }, 2000);
+          }
+
+          if (useMuxPlayer && muxPlayerRef.current) {
+            muxPlayerRef.current.play?.().catch(() => {});
+          } else if (!useMuxPlayer) {
+            player?.play?.().catch(() => {});
+          }
+        } else {
+          setIsPlaying(false);
+          rotation.value = 0;
+          
+          if (viewTimerRef.current) {
+            clearTimeout(viewTimerRef.current);
+          }
+
+          if (useMuxPlayer && muxPlayerRef.current) {
+            muxPlayerRef.current.pause?.().catch(() => {});
+          } else if (!useMuxPlayer) {
+            player?.pause?.().catch(() => {});
+          }
+        }
+      } catch (error) {
+        console.log('Player state error (non-critical):', error);
       }
-    }
+    }, 100);
+
+    return () => clearTimeout(timeout);
   }, [isActive, useMuxPlayer, viewRecorded, onView, player, rotation, video.id]);
 
   const discAnimatedStyle = useAnimatedStyle(() => ({
     transform: [{ rotate: `${rotation.value}deg` }],
   }));
 
-  const doubleTap = Gesture.Tap()
-    .numberOfTaps(2)
-    .onEnd(() => {
-      console.log('User double-tapped video to like');
+  // Handle video press with debounce and double-tap detection
+  const handleVideoPress = useCallback(() => {
+    if (isTogglingRef.current || !isMountedRef.current) return;
+    
+    const now = Date.now();
+    const DOUBLE_TAP_DELAY = 300;
+    
+    // Check for double tap
+    if (now - lastTapRef.current < DOUBLE_TAP_DELAY) {
+      // Double tap - handle like
+      lastTapRef.current = 0; // Reset to prevent triple tap issues
       handleLike();
-    });
-
-  const singleTap = Gesture.Tap()
-    .numberOfTaps(1)
-    .onEnd(() => {
-      console.log('User tapped video to toggle play/pause');
-      if (isPlaying) {
-        if (useMuxPlayer && muxPlayerRef.current) {
-          muxPlayerRef.current.pause();
-        } else {
-          player.pause();
-        }
-        setIsPlaying(false);
-      } else {
-        if (useMuxPlayer && muxPlayerRef.current) {
-          muxPlayerRef.current.play();
-        } else {
-          player.play();
-        }
-        setIsPlaying(true);
+      return;
+    }
+    
+    lastTapRef.current = now;
+    
+    // Single tap - handle after delay to confirm it's not a double tap
+    setTimeout(() => {
+      if (!isMountedRef.current) return;
+      
+      const currentTime = Date.now();
+      if (currentTime - lastTapRef.current >= DOUBLE_TAP_DELAY && !isTogglingRef.current) {
+        // Confirmed single tap
+        togglePlayPause();
       }
-    });
+    }, DOUBLE_TAP_DELAY + 50);
+  }, []);
 
-  const tapGesture = Gesture.Exclusive(doubleTap, singleTap);
+  // Toggle play/pause with safety checks
+  const togglePlayPause = useCallback(async () => {
+    if (isTogglingRef.current || !isMountedRef.current) return;
+    
+    isTogglingRef.current = true;
+    
+    try {
+      const newPlayingState = !isPlaying;
+      
+      if (newPlayingState) {
+        // Play
+        if (useMuxPlayer && muxPlayerRef.current) {
+          await muxPlayerRef.current.play?.().catch(() => {});
+        } else if (!useMuxPlayer && player) {
+          await player.play?.().catch(() => {});
+        }
+      } else {
+        // Pause
+        if (useMuxPlayer && muxPlayerRef.current) {
+          await muxPlayerRef.current.pause?.().catch(() => {});
+        } else if (!useMuxPlayer && player) {
+          await player.pause?.().catch(() => {});
+        }
+      }
+      
+      if (isMountedRef.current) {
+        setIsPlaying(newPlayingState);
+      }
+    } catch (error) {
+      console.log('Toggle play/pause error (non-critical):', error);
+    } finally {
+      // Reset toggle lock after delay
+      setTimeout(() => {
+        isTogglingRef.current = false;
+      }, 300);
+    }
+  }, [isPlaying, useMuxPlayer, player]);
 
   const handleLike = async () => {
-    console.log('User tapped Like button on video:', video.id);
-    const wasLiked = localVideo.isLiked;
-    const newLikesCount = wasLiked ? localVideo.likesCount - 1 : localVideo.likesCount + 1;
+    console.log('User double-tapped to like video:', video.id);
+    if (localVideo.isLiked) return; // Already liked
+    
+    const newLikesCount = localVideo.likesCount + 1;
 
     setLocalVideo({
       ...localVideo,
-      isLiked: !wasLiked,
+      isLiked: true,
       likesCount: newLikesCount,
     });
 
     try {
-      if (wasLiked) {
-        await authenticatedDelete(`/api/videos/${video.id}/like`);
-      } else {
-        await authenticatedPost(`/api/videos/${video.id}/like`, {});
-      }
+      await authenticatedPost(`/api/videos/${video.id}/like`, {});
     } catch (error) {
       console.error('Failed to toggle like:', error);
-      setLocalVideo({
-        ...localVideo,
-        isLiked: wasLiked,
-        likesCount: video.likesCount,
-      });
+      // Revert on error
+      if (isMountedRef.current) {
+        setLocalVideo({
+          ...localVideo,
+          isLiked: false,
+          likesCount: localVideo.likesCount,
+        });
+      }
     }
   };
 
@@ -288,11 +366,13 @@ const VideoItem = ({ video, isActive, onView }: VideoItemProps) => {
       }
     } catch (error) {
       console.error('Failed to toggle save:', error);
-      setLocalVideo({
-        ...localVideo,
-        isSaved: wasSaved,
-        savesCount: video.savesCount,
-      });
+      if (isMountedRef.current) {
+        setLocalVideo({
+          ...localVideo,
+          isSaved: wasSaved,
+          savesCount: video.savesCount,
+        });
+      }
     }
   };
 
@@ -313,10 +393,12 @@ const VideoItem = ({ video, isActive, onView }: VideoItemProps) => {
       }
     } catch (error) {
       console.error('Failed to toggle follow:', error);
-      setLocalVideo({
-        ...localVideo,
-        isFollowing: wasFollowing,
-      });
+      if (isMountedRef.current) {
+        setLocalVideo({
+          ...localVideo,
+          isFollowing: wasFollowing,
+        });
+      }
     }
   };
 
@@ -376,7 +458,11 @@ const VideoItem = ({ video, isActive, onView }: VideoItemProps) => {
 
   return (
     <View style={styles.videoContainer}>
-      <GestureDetector gesture={tapGesture}>
+      <TouchableOpacity
+        activeOpacity={1}
+        onPress={handleVideoPress}
+        style={styles.videoWrapper}
+      >
         <View style={styles.videoWrapper}>
           {useMuxPlayer ? (
             video.masterPlaylistUrl ? (
@@ -437,7 +523,7 @@ const VideoItem = ({ video, isActive, onView }: VideoItemProps) => {
             </View>
           )}
         </View>
-      </GestureDetector>
+      </TouchableOpacity>
 
       <View style={styles.leftContainer}>
         <View style={styles.userInfo}>

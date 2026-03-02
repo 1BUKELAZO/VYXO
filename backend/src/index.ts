@@ -134,6 +134,7 @@ registerAnalyticsRoutes(app);
 registerAdminRoutes(app);
 
 // 🚀 PUBLIC SEED ENDPOINT - No authentication required
+// IMPORTANTE: Este endpoint debe ir DESPUÉS de registrar todas las rutas
 app.fastify.post(
   '/api/seed',
   {
@@ -170,6 +171,21 @@ app.fastify.post(
       }
 
       const userId = firstUser.id;
+
+      // Check if videos already exist for this user
+      const existingVideos = await app.db
+        .select({ count: sql<number>`count(*)` })
+        .from(appSchema.videos)
+        .where(sql`${appSchema.videos.userId} = ${userId}`);
+
+      if (existingVideos[0]?.count > 0) {
+        app.logger.info({ userId, count: existingVideos[0].count }, 'Videos already exist for user');
+        return {
+          success: true,
+          message: 'Videos already exist for this user',
+          videos: existingVideos[0].count,
+        };
+      }
 
       // Sample videos
       const sampleVideos = [
@@ -238,7 +254,10 @@ app.fastify.post(
       };
     } catch (error) {
       app.logger.error({ err: error }, 'Failed to seed sample videos');
-      throw error;
+      return reply.code(500).send({
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
     }
   }
 );

@@ -1,19 +1,12 @@
-// utils/api.ts - REEMPLAZAR TODO EL ARCHIVO CON ESTO
 import * as SecureStore from 'expo-secure-store';
 
-// 🔧 FIX: URL base SIN el /api al final y SIN espacios
-const API_URL = 'https://vyxo-backend.onrender.com';
+const API_URL = 'https://vyxo-backend.onrender.com/api';
 
-// Token storage keys
+// Token keys
 const ACCESS_TOKEN_KEY = 'vyxo_access_token';
 const REFRESH_TOKEN_KEY = 'vyxo_refresh_token';
 
 // Interfaces
-interface Tokens {
-  accessToken: string | null;
-  refreshToken: string | null;
-}
-
 interface User {
   id: string;
   email: string;
@@ -23,23 +16,24 @@ interface User {
   emailVerified?: boolean;
 }
 
-// Guardar tokens en SecureStore
+// Guardar tokens
 export async function saveTokens(accessToken: string, refreshToken: string): Promise<void> {
   try {
     await SecureStore.setItemAsync(ACCESS_TOKEN_KEY, accessToken);
     await SecureStore.setItemAsync(REFRESH_TOKEN_KEY, refreshToken);
-    console.log('✅ Tokens guardados en SecureStore');
+    console.log('✅ Tokens guardados');
   } catch (error) {
     console.error('❌ Error guardando tokens:', error);
     throw error;
   }
 }
 
-// Obtener tokens de SecureStore
-export async function getTokens(): Promise<Tokens> {
+// Obtener tokens
+export async function getTokens(): Promise<{ accessToken: string | null; refreshToken: string | null }> {
   try {
     const accessToken = await SecureStore.getItemAsync(ACCESS_TOKEN_KEY);
     const refreshToken = await SecureStore.getItemAsync(REFRESH_TOKEN_KEY);
+    console.log('🔑 getTokens - accessToken exists:', !!accessToken);
     return { accessToken, refreshToken };
   } catch (error) {
     console.error('❌ Error leyendo tokens:', error);
@@ -47,7 +41,7 @@ export async function getTokens(): Promise<Tokens> {
   }
 }
 
-// Limpiar tokens (logout)
+// Limpiar tokens
 export async function clearTokens(): Promise<void> {
   try {
     await SecureStore.deleteItemAsync(ACCESS_TOKEN_KEY);
@@ -60,106 +54,123 @@ export async function clearTokens(): Promise<void> {
 
 // Login
 export async function login(email: string, password: string): Promise<{ user: User; accessToken: string; refreshToken: string }> {
-  const response = await fetch(`${API_URL}/api/auth/login`, {
+  console.log('🔐 Login - calling:', `${API_URL}/auth/login`);
+  const response = await fetch(`${API_URL}/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, password }),
   });
 
   const data = await response.json();
+  console.log('🔐 Login - response status:', response.status);
 
   if (!response.ok) {
-    throw new Error(data.message || 'Login failed');
+    throw new Error(data.message || data.error || 'Login failed');
   }
 
-  // Guardar tokens
   await saveTokens(data.accessToken, data.refreshToken);
-
   return data;
 }
 
 // Register
 export async function register(name: string, email: string, password: string): Promise<{ user: User; accessToken: string; refreshToken: string }> {
-  const response = await fetch(`${API_URL}/api/auth/register`, {
+  console.log('📝 Register - calling:', `${API_URL}/auth/register`);
+  const response = await fetch(`${API_URL}/auth/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name, email, password }),
   });
 
   const data = await response.json();
+  console.log('📝 Register - response status:', response.status);
 
   if (!response.ok) {
-    throw new Error(data.message || 'Registration failed');
+    throw new Error(data.message || data.error || 'Registration failed');
   }
 
-  // Guardar tokens
   await saveTokens(data.accessToken, data.refreshToken);
-
   return data;
 }
 
-// Obtener perfil del usuario
+// Get Profile
 export async function getProfile(): Promise<User> {
   const { accessToken } = await getTokens();
-
+  
+  console.log('👤 getProfile - token exists:', !!accessToken);
+  
   if (!accessToken) {
     throw new Error('No access token');
   }
 
-  const response = await fetch(`${API_URL}/api/auth/me`, {
+  const response = await fetch(`${API_URL}/auth/me`, {
     headers: {
       'Authorization': `Bearer ${accessToken}`,
       'Content-Type': 'application/json',
     },
   });
+  
+  console.log('👤 getProfile - response status:', response.status);
 
   if (response.status === 401) {
-    // Token expirado, intentar refresh
+    console.log('🔄 Token expired, refreshing...');
     const newToken = await refreshAccessToken();
     
-    const retryResponse = await fetch(`${API_URL}/api/auth/me`, {
+    // Retry with new token
+    const retryResponse = await fetch(`${API_URL}/auth/me`, {
       headers: {
         'Authorization': `Bearer ${newToken}`,
         'Content-Type': 'application/json',
       },
     });
-
+    
+    console.log('👤 getProfile retry - response status:', retryResponse.status);
+    
     if (!retryResponse.ok) {
-      throw new Error('Failed to fetch profile after refresh');
+      const errorText = await retryResponse.text();
+      console.error('👤 getProfile retry - error:', errorText);
+      throw new Error('Failed to get profile after refresh');
     }
-
+    
     return retryResponse.json();
   }
-
+  
   if (!response.ok) {
-    throw new Error('Failed to fetch profile');
+    const errorText = await response.text();
+    console.error('👤 getProfile - error:', errorText);
+    throw new Error('Failed to get profile');
   }
-
+  
   return response.json();
 }
 
-// Refresh token
+// Refresh Token
 export async function refreshAccessToken(): Promise<string> {
   const { refreshToken } = await getTokens();
-
+  
+  console.log('🔄 refreshAccessToken - refreshToken exists:', !!refreshToken);
+  
   if (!refreshToken) {
     throw new Error('No refresh token');
   }
 
-  const response = await fetch(`${API_URL}/api/auth/refresh`, {
+  const response = await fetch(`${API_URL}/auth/refresh`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ refreshToken }),
   });
+  
+  console.log('🔄 refreshAccessToken - response status:', response.status);
 
   const data = await response.json();
-
+  
   if (!response.ok) {
+    console.error('🔄 refreshAccessToken - error:', data);
     await clearTokens();
-    throw new Error('Session expired');
+    throw new Error(data.message || data.error || 'Session expired');
   }
 
   await SecureStore.setItemAsync(ACCESS_TOKEN_KEY, data.accessToken);
+  console.log('🔄 refreshAccessToken - new token saved');
   return data.accessToken;
 }
 
@@ -169,7 +180,7 @@ export async function logout(): Promise<void> {
 
   if (refreshToken) {
     try {
-      await fetch(`${API_URL}/api/auth/logout`, {
+      await fetch(`${API_URL}/auth/logout`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ refreshToken }),
@@ -182,28 +193,7 @@ export async function logout(): Promise<void> {
   await clearTokens();
 }
 
-// 🔧 Función helper para construir URLs correctamente
-function buildUrl(endpoint: string): string {
-  // Si es URL completa, usar tal cual
-  if (endpoint.startsWith('http')) {
-    return endpoint;
-  }
-  
-  // Si el endpoint ya empieza con /api/, usarlo directamente con API_URL
-  if (endpoint.startsWith('/api/')) {
-    return `${API_URL}${endpoint}`;
-  }
-  
-  // Si el endpoint empieza con / pero no tiene /api/, agregar /api
-  if (endpoint.startsWith('/')) {
-    return `${API_URL}/api${endpoint}`;
-  }
-  
-  // Si no empieza con /, agregar /api/
-  return `${API_URL}/api/${endpoint}`;
-}
-
-// API call autenticada (para usar en otros servicios)
+// API call autenticada
 export async function authenticatedApiCall(
   endpoint: string,
   options: RequestInit = {}
@@ -214,9 +204,7 @@ export async function authenticatedApiCall(
     throw new Error('Authentication token not found. Please sign in.');
   }
 
-  const url = buildUrl(endpoint);
-  
-  console.log(`🌐 API Call: ${url}`);
+  const url = endpoint.startsWith('http') ? endpoint : `${API_URL}${endpoint}`;
 
   const response = await fetch(url, {
     ...options,
@@ -228,7 +216,6 @@ export async function authenticatedApiCall(
   });
 
   if (response.status === 401) {
-    // Intentar refresh y reintentar
     const newToken = await refreshAccessToken();
     
     const retryResponse = await fetch(url, {
@@ -263,141 +250,45 @@ export async function isAuthenticated(): Promise<boolean> {
 }
 
 // ============================================================
-// FUNCIONES ADICIONALES PARA COMPATIBILIDAD CON COMPONENTES
+// FUNCIONES ADICIONALES PARA COMPATIBILIDAD
 // ============================================================
 
-/**
- * GET request helper
- */
 export const apiGet = async <T = any>(endpoint: string): Promise<T> => {
   return authenticatedApiCall(endpoint, { method: "GET" });
 };
 
-/**
- * POST request helper
- */
-export const apiPost = async <T = any>(
-  endpoint: string,
-  data: any
-): Promise<T> => {
-  return authenticatedApiCall(endpoint, {
-    method: "POST",
-    body: JSON.stringify(data),
-  });
+export const apiPost = async <T = any>(endpoint: string, data: any): Promise<T> => {
+  return authenticatedApiCall(endpoint, { method: "POST", body: JSON.stringify(data) });
 };
 
-/**
- * PUT request helper
- */
-export const apiPut = async <T = any>(
-  endpoint: string,
-  data: any
-): Promise<T> => {
-  return authenticatedApiCall(endpoint, {
-    method: "PUT",
-    body: JSON.stringify(data),
-  });
+export const apiPut = async <T = any>(endpoint: string, data: any): Promise<T> => {
+  return authenticatedApiCall(endpoint, { method: "PUT", body: JSON.stringify(data) });
 };
 
-/**
- * PATCH request helper
- */
-export const apiPatch = async <T = any>(
-  endpoint: string,
-  data: any
-): Promise<T> => {
-  return authenticatedApiCall(endpoint, {
-    method: "PATCH",
-    body: JSON.stringify(data),
-  });
+export const apiPatch = async <T = any>(endpoint: string, data: any): Promise<T> => {
+  return authenticatedApiCall(endpoint, { method: "PATCH", body: JSON.stringify(data) });
 };
 
-/**
- * DELETE request helper
- */
 export const apiDelete = async <T = any>(endpoint: string, data: any = {}): Promise<T> => {
-  return authenticatedApiCall(endpoint, {
-    method: "DELETE",
-    body: JSON.stringify(data),
-  });
+  return authenticatedApiCall(endpoint, { method: "DELETE", body: JSON.stringify(data) });
 };
 
-/**
- * Authenticated GET request
- */
 export const authenticatedGet = async <T = any>(endpoint: string): Promise<T> => {
   return authenticatedApiCall(endpoint, { method: "GET" });
 };
 
-/**
- * Authenticated POST request
- */
-export const authenticatedPost = async <T = any>(
-  endpoint: string,
-  data: any
-): Promise<T> => {
-  return authenticatedApiCall(endpoint, {
-    method: "POST",
-    body: JSON.stringify(data),
-  });
+export const authenticatedPost = async <T = any>(endpoint: string, data: any): Promise<T> => {
+  return authenticatedApiCall(endpoint, { method: "POST", body: JSON.stringify(data) });
 };
 
-/**
- * Authenticated PUT request
- */
-export const authenticatedPut = async <T = any>(
-  endpoint: string,
-  data: any
-): Promise<T> => {
-  return authenticatedApiCall(endpoint, {
-    method: "PUT",
-    body: JSON.stringify(data),
-  });
+export const authenticatedPut = async <T = any>(endpoint: string, data: any): Promise<T> => {
+  return authenticatedApiCall(endpoint, { method: "PUT", body: JSON.stringify(data) });
 };
 
-/**
- * Authenticated PATCH request
- */
-export const authenticatedPatch = async <T = any>(
-  endpoint: string,
-  data: any
-): Promise<T> => {
-  return authenticatedApiCall(endpoint, {
-    method: "PATCH",
-    body: JSON.stringify(data),
-  });
+export const authenticatedPatch = async <T = any>(endpoint: string, data: any): Promise<T> => {
+  return authenticatedApiCall(endpoint, { method: "PATCH", body: JSON.stringify(data) });
 };
 
-/**
- * Authenticated DELETE request
- */
 export const authenticatedDelete = async <T = any>(endpoint: string, data: any = {}): Promise<T> => {
-  return authenticatedApiCall(endpoint, {
-    method: "DELETE",
-    body: JSON.stringify(data),
-  });
-};
-
-/**
- * Public GET request (no authentication required)
- * 🔧 NUEVO: Para endpoints públicos como el feed
- */
-export const publicGet = async <T = any>(endpoint: string): Promise<T> => {
-  const url = buildUrl(endpoint);
-  
-  console.log(`🌐 Public API Call: ${url}`);
-
-  const response = await fetch(url, {
-    method: "GET",
-    headers: {
-      'Content-Type': 'application/json',
-    },
-  });
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Request failed' }));
-    throw new Error(error.message || 'Request failed');
-  }
-
-  return response.json();
+  return authenticatedApiCall(endpoint, { method: "DELETE", body: JSON.stringify(data) });
 };

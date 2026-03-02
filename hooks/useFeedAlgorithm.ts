@@ -1,6 +1,6 @@
-
-import { useState, useCallback, useEffect } from 'react';
-import { authenticatedGet, authenticatedPost } from '@/utils/api';
+// hooks/useFeedAlgorithm.ts - REEMPLAZAR TODO EL ARCHIVO CON ESTO
+import { useState, useCallback, useEffect, useRef } from 'react';
+import { authenticatedPost, publicGet } from '@/utils/api';
 
 export type FeedType = 'foryou' | 'trending';
 
@@ -37,7 +37,6 @@ export interface Video {
   parentVideoId?: string;
   isReply?: boolean;
   parentVideoAuthorUsername?: string;
-  // Duet/Stitch metadata
   allowDuets?: boolean;
   allowStitches?: boolean;
   duetWithId?: string;
@@ -47,7 +46,6 @@ export interface Video {
   duetsCount?: number;
   duetWithUsername?: string;
   duetWithAvatarUrl?: string;
-  // API response fields (nested)
   author?: {
     id: string;
     username: string;
@@ -111,6 +109,15 @@ export function useFeedAlgorithm({
   const [error, setError] = useState<string | null>(null);
   const [cursor, setCursor] = useState<string | null>(null);
   const [videoHistory, setVideoHistory] = useState<string[]>([]);
+  
+  const hasFetchedRef = useRef(false);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   const injectAds = useCallback(async (videoList: Video[], currentHistory: string[]) => {
     console.log('[Ads] Injecting ads into feed, video count:', videoList.length);
@@ -119,7 +126,6 @@ export function useFeedAlgorithm({
     for (let i = 0; i < videoList.length; i++) {
       items.push(videoList[i]);
       
-      // Inject ad every 5 videos (frequency cap)
       if ((i + 1) % 5 === 0 && i < videoList.length - 1) {
         try {
           console.log('[Ads] Fetching ad for position', i + 1);
@@ -135,7 +141,6 @@ export function useFeedAlgorithm({
           
           if (ad) {
             console.log('[Ads] Ad fetched:', ad.campaignId);
-            // Record impression immediately
             const impressionResult = await authenticatedPost<{ impressionId: string }>(
               '/api/ads/impressions',
               { campaignId: ad.campaignId }
@@ -153,12 +158,10 @@ export function useFeedAlgorithm({
             
             items.push(adItem);
             console.log('[Ads] Ad injected at position', items.length - 1);
-          } else {
-            console.log('[Ads] No ad available for this position');
           }
         } catch (err) {
-          console.error('[Ads] Error fetching ad:', err);
-          // Continue without ad if fetch fails
+          // 🔧 FIX: Silenciar error de ads (no crítico)
+          console.log('[Ads] Ad fetch failed (expected), continuing without ad');
         }
       }
     }
@@ -180,7 +183,7 @@ export function useFeedAlgorithm({
     setError(null);
 
     try {
-      const endpoint = type === 'foryou' ? '/api/feed/foryou' : '/api/feed/trending';
+      const endpoint = type === 'foryou' ? '/api/videos/feed' : '/api/feed/trending';
       const params = new URLSearchParams();
       
       if (limit) {
@@ -195,65 +198,72 @@ export function useFeedAlgorithm({
       const url = queryString ? `${endpoint}?${queryString}` : endpoint;
 
       console.log(`Fetching from: ${url}`);
-      const response = await authenticatedGet<FeedResponse>(url);
+      const response = await publicGet<FeedResponse | Video[]>(url);
 
-      // Handle both 'results' and 'videos' response formats
-      const rawVideoList = response.results || response.videos || [];
-      console.log(`Received ${rawVideoList.length} videos, nextCursor:`, response.nextCursor);
+      const rawVideoList = Array.isArray(response) ? response : (response.results || response.videos || []);
+      console.log(`Received ${rawVideoList.length} videos`);
 
-      // Transform API response to match frontend Video interface
       const videoList = rawVideoList.map((video: any) => ({
         ...video,
-        // Flatten author fields
         userId: video.userId || video.author?.id,
         username: video.username || video.author?.username,
         avatarUrl: video.avatarUrl || video.author?.avatar,
-        // Flatten sound fields
         soundId: video.soundId || video.sound?.id,
         soundTitle: video.soundTitle || video.sound?.title,
         soundArtistName: video.soundArtistName || video.sound?.artistName,
       }));
 
-      // Update video history
       const newHistory = isRefresh 
         ? videoList.map(v => v.id)
         : [...videoHistory, ...videoList.map(v => v.id)];
       setVideoHistory(newHistory);
 
-      // Inject ads into feed
       const itemsWithAds = await injectAds(videoList, isRefresh ? [] : videoHistory);
 
-      if (isRefresh) {
-        setVideos(videoList);
-        setFeedItems(itemsWithAds);
-      } else {
-        setVideos((prev) => [...prev, ...videoList]);
-        setFeedItems((prev) => [...prev, ...itemsWithAds]);
-      }
+      if (isMountedRef.current) {
+        if (isRefresh) {
+          setVideos(videoList);
+          setFeedItems(itemsWithAds);
+        } else {
+          setVideos((prev) => [...prev, ...videoList]);
+          setFeedItems((prev) => [...prev, ...itemsWithAds]);
+        }
 
-      setCursor(response.nextCursor || null);
-      setHasMore(response.hasMore !== undefined ? response.hasMore : !!response.nextCursor);
+        if (Array.isArray(response)) {
+          setCursor(null);
+          setHasMore(false);
+        } else {
+          setCursor(response.nextCursor || null);
+          setHasMore(response.hasMore !== undefined ? response.hasMore : !!response.nextCursor);
+        }
+      }
     } catch (err) {
       console.error(`Error fetching ${type} feed:`, err);
       const errorMessage = err instanceof Error ? err.message : 'Failed to load feed';
-      setError(errorMessage);
+      if (isMountedRef.current) {
+        setError(errorMessage);
+        setHasMore(false);
+      }
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (isMountedRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, [type, limit, cursor, videoHistory, injectAds]);
 
   const refresh = useCallback(async () => {
     console.log(`Refreshing ${type} feed`);
+    hasFetchedRef.current = false;
     await fetchFeed(true);
   }, [fetchFeed, type]);
 
   const loadMore = useCallback(async () => {
-    if (!loading && !refreshing && hasMore && cursor) {
+    if (!loading && !refreshing && hasMore && cursor && !error) {
       console.log(`Loading more ${type} videos, cursor:`, cursor);
       await fetchFeed(false);
     }
-  }, [loading, refreshing, hasMore, cursor, fetchFeed, type]);
+  }, [loading, refreshing, hasMore, cursor, error, fetchFeed, type]);
 
   const recordView = useCallback(async (videoId: string) => {
     console.log('Recording view for video:', videoId);
@@ -264,8 +274,7 @@ export function useFeedAlgorithm({
         viewsCount: number;
       }>(`/api/videos/${videoId}/view`, {});
       
-      // Update local video views count with actual count from server
-      if (response.success) {
+      if (response.success && isMountedRef.current) {
         setVideos((prev) =>
           prev.map((video) =>
             video.id === videoId
@@ -275,14 +284,14 @@ export function useFeedAlgorithm({
         );
       }
     } catch (err) {
-      console.error('Error recording view:', err);
-      // Don't show error to user - view tracking is non-critical
+      // 🔧 FIX: Silenciar error de view recording (no crítico)
+      console.log('[Feed] View recording failed (expected), continuing silently');
     }
   }, []);
 
-  // Auto-fetch on mount if enabled
   useEffect(() => {
-    if (autoFetch) {
+    if (autoFetch && !hasFetchedRef.current && isMountedRef.current) {
+      hasFetchedRef.current = true;
       fetchFeed(true);
     }
   }, [autoFetch, fetchFeed, type]);

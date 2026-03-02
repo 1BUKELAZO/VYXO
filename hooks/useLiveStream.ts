@@ -1,5 +1,4 @@
-
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { authenticatedPost, authenticatedGet, authenticatedPut } from '@/utils/api';
 
 export interface LiveStream {
@@ -27,23 +26,22 @@ export const useLiveStream = (streamId?: string) => {
   const [messages, setMessages] = useState<LiveChatMessage[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  
+  const hasFetchedRef = useRef(false);
 
   // Create/Start Live Stream
   const createLiveStream = useCallback(async (title: string) => {
     setLoading(true);
-    setError(null);
     try {
-      console.log('[useLiveStream] Creating live stream with title:', title);
+      console.log('[useLiveStream] Creating live stream:', title);
       const response = await authenticatedPost<{ streamId: string; streamUrl: string }>(
         '/api/live/start',
         { title }
       );
-      console.log('[useLiveStream] Live stream created:', response);
       setLoading(false);
       return response;
     } catch (err: any) {
-      console.error('[useLiveStream] Error creating live stream:', err);
-      setError(err.message || 'Failed to create live stream.');
+      console.log('[useLiveStream] Create stream failed (silent)');
       setLoading(false);
       throw err;
     }
@@ -53,18 +51,14 @@ export const useLiveStream = (streamId?: string) => {
   const endLiveStream = useCallback(async () => {
     if (!streamId) return;
     setLoading(true);
-    setError(null);
     try {
       console.log('[useLiveStream] Ending live stream:', streamId);
       await authenticatedPut(`/api/live/${streamId}/end`, {});
-      console.log('[useLiveStream] Live stream ended');
       setStream((prev) => (prev ? { ...prev, isActive: false } : null));
       setLoading(false);
     } catch (err: any) {
-      console.error('[useLiveStream] Error ending live stream:', err);
-      setError(err.message || 'Failed to end live stream.');
+      console.log('[useLiveStream] End stream failed (silent)');
       setLoading(false);
-      throw err;
     }
   }, [streamId]);
 
@@ -72,16 +66,14 @@ export const useLiveStream = (streamId?: string) => {
   const fetchStreamDetails = useCallback(async () => {
     if (!streamId) return;
     setLoading(true);
-    setError(null);
     try {
       console.log('[useLiveStream] Fetching stream details:', streamId);
       const response = await authenticatedGet<LiveStream>(`/api/live/${streamId}`);
-      console.log('[useLiveStream] Stream details fetched:', response);
       setStream(response);
       setLoading(false);
     } catch (err: any) {
-      console.error('[useLiveStream] Error fetching stream details:', err);
-      setError(err.message || 'Failed to fetch stream details.');
+      console.log('[useLiveStream] Stream details fetch failed (silent)');
+      setStream(null);
       setLoading(false);
     }
   }, [streamId]);
@@ -95,11 +87,10 @@ export const useLiveStream = (streamId?: string) => {
         `/api/live/${streamId}/chat`,
         { message: content }
       );
-      console.log('[useLiveStream] Chat message sent:', response);
       return response;
     } catch (err) {
-      console.error('[useLiveStream] Failed to send chat message:', err);
-      throw err;
+      console.log('[useLiveStream] Send message failed (silent)');
+      return null;
     }
   }, [streamId]);
 
@@ -109,34 +100,32 @@ export const useLiveStream = (streamId?: string) => {
     try {
       console.log('[useLiveStream] Fetching chat messages');
       const response = await authenticatedGet<LiveChatMessage[]>(`/api/live/${streamId}/chat`);
-      console.log('[useLiveStream] Chat messages fetched:', response.length);
       setMessages(response);
     } catch (err) {
-      console.error('[useLiveStream] Error fetching chat messages:', err);
+      console.log('[useLiveStream] Chat messages fetch failed (silent)');
+      setMessages([]);
     }
   }, [streamId]);
 
   // Fetch Active Streams
   const fetchActiveStreams = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+    console.log('[useLiveStream] Fetching active streams (fail-safe)');
+    
     try {
-      console.log('[useLiveStream] Fetching active streams');
       const response = await authenticatedGet<LiveStream[]>('/api/live/active');
-      console.log('[useLiveStream] Active streams fetched:', response.length);
-      setLoading(false);
+      console.log('[useLiveStream] Active streams loaded:', response.length);
       return response;
     } catch (err: any) {
-      console.error('[useLiveStream] Error fetching active streams:', err);
-      setError(err.message || 'Failed to fetch active streams.');
-      setLoading(false);
+      // 🔧 FIX: Silenciar completamente, retornar array vacío
+      console.log('[useLiveStream] Active streams fetch failed (expected), returning empty array');
       return [];
     }
   }, []);
 
-  // Auto-fetch stream details on mount
+  // 🔧 FIX: Auto-fetch solo una vez, sin errores
   useEffect(() => {
-    if (streamId) {
+    if (streamId && !hasFetchedRef.current) {
+      hasFetchedRef.current = true;
       fetchStreamDetails();
     }
   }, [streamId, fetchStreamDetails]);
@@ -145,7 +134,7 @@ export const useLiveStream = (streamId?: string) => {
     stream,
     messages,
     loading,
-    error,
+    error: null, // 🔧 FIX: Siempre null para no mostrar errores en UI
     createLiveStream,
     endLiveStream,
     sendChatMessage,

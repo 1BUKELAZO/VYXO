@@ -1,57 +1,48 @@
-import { createAuthClient } from "better-auth/react";
-import { expoClient } from "@better-auth/expo/client";
 import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
-import Constants from "expo-constants";
 
-const API_URL = "https://vyxo-backend.onrender.com/api/auth";
+const API_URL = "https://vyxo-backend.onrender.com/api";
 
+// Nuevas claves (compatibles con lib/api.ts)
+export const ACCESS_TOKEN_KEY = 'vyxo_access_token';
+export const REFRESH_TOKEN_KEY = 'vyxo_refresh_token';
+
+// Clave vieja (para compatibilidad temporal)
 export const BEARER_TOKEN_KEY = "vyxo_bearer_token";
 
-// Platform-specific storage: localStorage for web, SecureStore for native
-const storage = Platform.OS === "web"
-  ? {
-      getItem: (key: string) => localStorage.getItem(key),
-      setItem: (key: string, value: string) => localStorage.setItem(key, value),
-      deleteItem: (key: string) => localStorage.removeItem(key),
-    }
-  : SecureStore;
-
-export const authClient = createAuthClient({
-  baseURL: API_URL,
-  plugins: [
-    expoClient({
-      scheme: "vyxo",
-      storagePrefix: "vyxo",
-      storage,
-    }),
-  ],
-  // On web, use cookies (credentials: include) and fallback to bearer token
-  ...(Platform.OS === "web" && {
-    fetchOptions: {
-      credentials: "include",
-      auth: {
-        type: "Bearer" as const,
-        token: () => localStorage.getItem(BEARER_TOKEN_KEY) || "",
-      },
-    },
-  }),
-});
-
-export async function setBearerToken(token: string) {
+// Helper para obtener access token (usado por utils/api.ts)
+export async function getBearerToken(): Promise<string | null> {
+  // Primero intentar nueva clave
   if (Platform.OS === "web") {
-    localStorage.setItem(BEARER_TOKEN_KEY, token);
+    return localStorage.getItem(ACCESS_TOKEN_KEY) || localStorage.getItem(BEARER_TOKEN_KEY);
   } else {
-    await SecureStore.setItemAsync(BEARER_TOKEN_KEY, token);
+    return await SecureStore.getItemAsync(ACCESS_TOKEN_KEY) || await SecureStore.getItemAsync(BEARER_TOKEN_KEY);
   }
 }
 
+// Helper para guardar token (compatibilidad)
+export async function setBearerToken(token: string) {
+  if (Platform.OS === "web") {
+    localStorage.setItem(ACCESS_TOKEN_KEY, token);
+    localStorage.setItem(BEARER_TOKEN_KEY, token); // Compatibilidad vieja
+  } else {
+    await SecureStore.setItemAsync(ACCESS_TOKEN_KEY, token);
+    await SecureStore.setItemAsync(BEARER_TOKEN_KEY, token); // Compatibilidad vieja
+  }
+}
+
+// Limpiar todos los tokens
 export async function clearAuthTokens() {
   if (Platform.OS === "web") {
+    localStorage.removeItem(ACCESS_TOKEN_KEY);
+    localStorage.removeItem(REFRESH_TOKEN_KEY);
     localStorage.removeItem(BEARER_TOKEN_KEY);
   } else {
+    await SecureStore.deleteItemAsync(ACCESS_TOKEN_KEY);
+    await SecureStore.deleteItemAsync(REFRESH_TOKEN_KEY);
     await SecureStore.deleteItemAsync(BEARER_TOKEN_KEY);
   }
 }
 
+// Re-exportar funciones de lib/api.ts para compatibilidad
 export { API_URL };
