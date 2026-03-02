@@ -10,8 +10,8 @@ import crypto from 'crypto';
 // JWT UTILITIES (INLINE para evitar problemas de build)
 // ============================================
 
-const ACCESS_TOKEN_SECRET = process.env.ACCESS_TOKEN_SECRET || 'vyxo-access-secret-key-2026';
-const REFRESH_TOKEN_SECRET = process.env.REFRESH_TOKEN_SECRET || 'vyxo-refresh-secret-key-2026';
+// Usando AUTH_SECRET de Render (fallback para desarrollo local)
+const AUTH_SECRET = process.env.AUTH_SECRET || 'vyxo-auth-secret-key-2026';
 const ACCESS_TOKEN_EXPIRES_IN = '15m';
 const REFRESH_TOKEN_EXPIRES_IN = '7d';
 
@@ -98,20 +98,20 @@ function verifyJWT(token: string, secret: string): JWTPayload | null {
 }
 
 function createAccessToken(userId: string, email: string, role: string): string {
-  return createJWT({ userId, email, role, type: 'access' }, ACCESS_TOKEN_SECRET, ACCESS_TOKEN_EXPIRES_IN);
+  return createJWT({ userId, email, role, type: 'access' }, AUTH_SECRET, ACCESS_TOKEN_EXPIRES_IN);
 }
 
 function createRefreshToken(userId: string, email: string, role: string): string {
-  return createJWT({ userId, email, role, type: 'refresh' }, REFRESH_TOKEN_SECRET, REFRESH_TOKEN_EXPIRES_IN);
+  return createJWT({ userId, email, role, type: 'refresh' }, AUTH_SECRET, REFRESH_TOKEN_EXPIRES_IN);
 }
 
 function verifyAccessToken(token: string): JWTPayload | null {
-  const payload = verifyJWT(token, ACCESS_TOKEN_SECRET);
+  const payload = verifyJWT(token, AUTH_SECRET);
   return payload && payload.type === 'access' ? payload : null;
 }
 
 function verifyRefreshToken(token: string): JWTPayload | null {
-  const payload = verifyJWT(token, REFRESH_TOKEN_SECRET);
+  const payload = verifyJWT(token, AUTH_SECRET);
   return payload && payload.type === 'refresh' ? payload : null;
 }
 
