@@ -872,8 +872,8 @@ export function registerVideoRoutes(app: App) {
         // Sample videos
         const sampleVideos = [
           {
-            videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4   ',
-            thumbnailUrl: 'https://images.unsplash.com/photo-1574158622682-e40e69881006?w=400   ',
+            videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4  ',
+            thumbnailUrl: 'https://images.unsplash.com/photo-1574158622682-e40e69881006?w=400  ',
             caption: 'Amazing nature documentary 🌿 #nature #wildlife',
             userId,
             duration: 30,
@@ -887,8 +887,8 @@ export function registerVideoRoutes(app: App) {
             allowStitches: true,
           },
           {
-            videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4   ',
-            thumbnailUrl: 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=400   ',
+            videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4  ',
+            thumbnailUrl: 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=400  ',
             caption: 'Creative animation showcase ✨ #animation #art',
             userId,
             duration: 25,
@@ -902,8 +902,8 @@ export function registerVideoRoutes(app: App) {
             allowStitches: true,
           },
           {
-            videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4   ',
-            thumbnailUrl: 'https://images.unsplash.com/photo-1492691527719-9d1e07e534b4?w=400   ',
+            videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4  ',
+            thumbnailUrl: 'https://images.unsplash.com/photo-1492691527719-9d1e07e534b4?w=400  ',
             caption: 'Epic adventure compilation 🎬 #adventure #travel',
             userId,
             duration: 20,
@@ -1130,96 +1130,6 @@ export function registerVideoRoutes(app: App) {
         };
       } catch (error) {
         app.logger.error({ err: error, videoId }, 'Failed to fetch video details');
-        throw error;
-      }
-    }
-  );
-
-  /**
-   * GET /api/users/:id
-   * Get user profile by ID
-   * Public endpoint
-   */
-  app.fastify.get(
-    '/api/users/:id',
-    {
-      schema: {
-        description: 'Get user profile by ID',
-        tags: ['users'],
-        params: {
-          type: 'object',
-          properties: {
-            id: { type: 'string' },
-          },
-        },
-        response: {
-          200: {
-            type: 'object',
-            properties: {
-              id: { type: 'string' },
-              username: { type: 'string' },
-              name: { type: 'string' },
-              avatarUrl: { type: 'string' },
-              bio: { type: 'string' },
-              followersCount: { type: 'number' },
-              followingCount: { type: 'number' },
-              likesCount: { type: 'number' },
-              isFollowing: { type: 'boolean' },
-            },
-          },
-        },
-      },
-    },
-    async (request: FastifyRequest, reply: FastifyReply) => {
-      const { id: userId } = request.params as { id: string };
-
-      app.logger.info({ userId }, 'Fetching user profile');
-
-      try {
-        // Get user from database
-        const [userRecord] = await app.db
-          .select({
-            id: user.id,
-            name: user.name,
-            email: user.email,
-            image: user.image,
-            bio: user.bio,
-          })
-          .from(user)
-          .where(eq(user.id, userId));
-
-        if (!userRecord) {
-          app.logger.warn({ userId }, 'User not found');
-          return reply.code(404).send({ success: false, error: 'User not found' });
-        }
-
-        // Get user's videos to calculate total likes
-        const userVideos = await app.db
-          .select({
-            likesCount: schema.videos.likesCount,
-          })
-          .from(schema.videos)
-          .where(eq(schema.videos.userId, userId));
-
-        const totalLikes = userVideos.reduce((sum, video) => sum + (video.likesCount || 0), 0);
-
-        // For now, return mock follow counts (implement follows later)
-        const profile = {
-          id: userRecord.id,
-          username: userRecord.email?.split('@')[0] || 'user',
-          name: userRecord.name || 'User',
-          avatarUrl: userRecord.image || '',
-          bio: userRecord.bio || '',
-          followersCount: 0, // TODO: Implement follows
-          followingCount: 0, // TODO: Implement follows
-          likesCount: totalLikes,
-          isFollowing: false,
-        };
-
-        app.logger.info({ userId, name: profile.name }, 'User profile fetched');
-        return profile;
-      } catch (error) {
-        app.logger.error({ err: error, userId }, 'Failed to fetch user profile');
         throw error;
       }
     }
