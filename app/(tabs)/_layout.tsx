@@ -1,8 +1,8 @@
-
 import { Tabs } from 'expo-router';
 import { IconSymbol } from '@/components/IconSymbol';
 import { colors } from '@/styles/commonStyles';
-import { Platform } from 'react-native';
+import { Platform, View } from 'react-native';
+import { router } from 'expo-router';
 
 export default function TabsLayout() {
   return (
@@ -53,21 +53,46 @@ export default function TabsLayout() {
           ),
         }}
       />
+      
+      {/* BOTÓN CREATE - Navega a upload */}
       <Tabs.Screen
         name="create"
         options={{
           title: 'Create',
           tabBarIcon: ({ size }) => (
-            <IconSymbol
-              ios_icon_name="plus.circle.fill"
-              android_material_icon_name="add-circle"
-              size={size}
-              color={colors.coral}
-            />
+            <View style={{
+              backgroundColor: colors.coral,
+              width: 48,
+              height: 48,
+              borderRadius: 24,
+              justifyContent: 'center',
+              alignItems: 'center',
+              marginBottom: Platform.OS === 'ios' ? 20 : 10,
+              shadowColor: colors.coral,
+              shadowOffset: { width: 0, height: 4 },
+              shadowOpacity: 0.3,
+              shadowRadius: 8,
+              elevation: 8,
+            }}>
+              <IconSymbol
+                ios_icon_name="plus"
+                android_material_icon_name="add"
+                size={28}
+                color="#FFFFFF"
+              />
+            </View>
           ),
           tabBarActiveTintColor: colors.coral,
         }}
+        listeners={{
+          tabPress: (e) => {
+            // Prevenir navegación por defecto y navegar a upload
+            e.preventDefault();
+            router.push('/upload');
+          },
+        }}
       />
+      
       <Tabs.Screen
         name="inbox"
         options={{

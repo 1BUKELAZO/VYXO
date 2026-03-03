@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import {
   View,
@@ -11,24 +10,22 @@ import {
 import { Stack, router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors } from '@/styles/commonStyles';
-import { authenticatedPost } from '@/utils/api';
 import Toast from '@/components/ui/Toast';
 import { IconSymbol } from '@/components/IconSymbol';
+
+// FIX: Definir la URL base directamente para evitar problemas con API_URL
+// El backend está en Render y el endpoint /seed es PÚBLICO
+const BACKEND_URL = 'https://vyxo-backend.onrender.com';
 
 interface SeedResponse {
   success: boolean;
   message: string;
-  videos: {
-    id: string;
-    video_url: string;
-    thumbnail_url: string;
-    caption: string;
-  }[];
+  videos?: number;
 }
 
 export default function SeedVideosScreen() {
   const [loading, setLoading] = useState(false);
-  const [seededVideos, setSeededVideos] = useState<SeedResponse['videos'] | null>(null);
+  const [seededCount, setSeededCount] = useState<number | null>(null);
   const [toastVisible, setToastVisible] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
   const [toastType, setToastType] = useState<'success' | 'error' | 'info'>('info');
@@ -40,28 +37,50 @@ export default function SeedVideosScreen() {
   };
 
   const handleSeedVideos = async () => {
-    console.log('User tapped Seed Videos button');
+    console.log('[Seed] Starting seed process...');
     setLoading(true);
+    
     try {
-      const response = await authenticatedPost<SeedResponse>('/api/videos/seed', {});
-      console.log('Seed videos response:', response);
+      // FIX: Usar URL completa correcta - endpoint PÚBLICO /api/seed
+      const url = `${BACKEND_URL}/api/seed`;
+      console.log('[Seed] Calling endpoint:', url);
       
-      if (response.success) {
-        setSeededVideos(response.videos);
-        showToast(response.message, 'success');
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: JSON.stringify({}),
+      });
+
+      console.log('[Seed] Response status:', response.status);
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('[Seed] HTTP Error:', response.status, errorText);
+        throw new Error(`HTTP ${response.status}: ${errorText}`);
+      }
+
+      const data: SeedResponse = await response.json();
+      console.log('[Seed] Success response:', data);
+      
+      if (data.success) {
+        setSeededCount(data.videos || 3);
+        showToast(data.message, 'success');
       } else {
-        showToast('Failed to seed videos', 'error');
+        showToast(data.message || 'Failed to seed videos', 'error');
       }
     } catch (error) {
-      console.error('Error seeding videos:', error);
-      showToast('Error seeding videos. Please try again.', 'error');
+      console.error('[Seed] Error:', error);
+      showToast(`Error: ${error instanceof Error ? error.message : 'Network request failed'}`, 'error');
     } finally {
       setLoading(false);
     }
   };
 
   const handleGoToHome = () => {
-    console.log('User tapped Go to Home button');
+    console.log('[Seed] Navigating to home');
     router.push('/(tabs)/(home)');
   };
 
@@ -111,28 +130,10 @@ export default function SeedVideosScreen() {
           )}
         </TouchableOpacity>
 
-        {seededVideos && seededVideos.length > 0 && (
+        {seededCount !== null && (
           <View style={styles.resultsContainer}>
-            <Text style={styles.resultsTitle}>✅ Successfully Created:</Text>
-            {seededVideos.map((video, index) => {
-              const videoNumber = index + 1;
-              return (
-                <View key={video.id} style={styles.videoCard}>
-                  <View style={styles.videoHeader}>
-                    <IconSymbol
-                      ios_icon_name="video.fill"
-                      android_material_icon_name="movie"
-                      size={20}
-                      color={colors.primary}
-                    />
-                    <Text style={styles.videoNumber}>Video {videoNumber}</Text>
-                  </View>
-                  <Text style={styles.videoCaption}>{video.caption}</Text>
-                  <Text style={styles.videoId}>ID: {video.id}</Text>
-                </View>
-              );
-            })}
-
+            <Text style={styles.resultsTitle}>✅ Successfully Created {seededCount} Videos!</Text>
+            
             <TouchableOpacity style={styles.homeButton} onPress={handleGoToHome}>
               <IconSymbol
                 ios_icon_name="house.fill"
@@ -215,41 +216,14 @@ const styles = StyleSheet.create({
   resultsContainer: {
     marginTop: 8,
     marginBottom: 24,
+    alignItems: 'center',
   },
   resultsTitle: {
     fontSize: 20,
     fontWeight: 'bold',
     color: colors.success,
     marginBottom: 16,
-  },
-  videoCard: {
-    backgroundColor: colors.cardBackground,
-    padding: 16,
-    borderRadius: 12,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  videoHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 8,
-  },
-  videoNumber: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: colors.text,
-  },
-  videoCaption: {
-    fontSize: 14,
-    color: colors.text,
-    marginBottom: 8,
-  },
-  videoId: {
-    fontSize: 12,
-    color: colors.textSecondary,
-    fontFamily: 'monospace',
+    textAlign: 'center',
   },
   homeButton: {
     backgroundColor: colors.secondary,

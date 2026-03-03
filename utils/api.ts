@@ -4,6 +4,9 @@ import * as SecureStore from 'expo-secure-store';
 // 🔧 FIX: URL base SIN el /api al final y SIN espacios
 const API_URL = 'https://vyxo-backend.onrender.com';
 
+// 🔧 NUEVO: Exportar BACKEND_URL para hooks como useMuxUpload
+export const BACKEND_URL = 'https://vyxo-backend.onrender.com';
+
 // Token storage keys
 const ACCESS_TOKEN_KEY = 'vyxo_access_token';
 const REFRESH_TOKEN_KEY = 'vyxo_refresh_token';
@@ -401,3 +404,16 @@ export const publicGet = async <T = any>(endpoint: string): Promise<T> => {
 
   return response.json();
 };
+
+// ============================================================
+// NUEVAS FUNCIONES PARA HOOKS
+// ============================================================
+
+/**
+ * Get bearer token for API calls
+ * Used by hooks like useMuxUpload
+ */
+export async function getBearerToken(): Promise<string | null> {
+  const { accessToken } = await getTokens();
+  return accessToken;
+}

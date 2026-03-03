@@ -187,7 +187,7 @@ app.fastify.post(
         };
       }
 
-      // Sample videos
+      // Sample videos - 🔧 FIX: URLs sin espacios al final
       const sampleVideos = [
         {
           videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',

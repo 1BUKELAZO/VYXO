@@ -1,3 +1,4 @@
+// app/tabs/home/index.tsx
 import {
   View,
   StyleSheet,
@@ -10,6 +11,7 @@ import {
   Image,
   ImageSourcePropType,
   ScrollView,
+  Pressable,
 } from 'react-native';
 import { router, useLocalSearchParams, Stack } from 'expo-router';
 import { useAuth } from '@/contexts/AuthContext';
@@ -146,17 +148,19 @@ interface VideoItemProps {
 
 const VideoItem = ({ video, isActive, onView }: VideoItemProps) => {
   const rotation = useSharedValue(0);
-  const [isPlaying, setIsPlaying] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(true);
   const [showOptions, setShowOptions] = useState(false);
   const [showShare, setShowShare] = useState(false);
   const [showReport, setShowReport] = useState(false);
   const [localVideo, setLocalVideo] = useState(video);
   const [viewRecorded, setViewRecorded] = useState(false);
+  const [showLikeAnimation, setShowLikeAnimation] = useState(false);
   const muxPlayerRef = useRef<any>(null);
   const isMountedRef = useRef(true);
-  const isTogglingRef = useRef(false);
   const lastTapRef = useRef(0);
+  const tapTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const viewTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const isPlayingRef = useRef(true);
 
   const useMuxPlayer = (!!video.muxPlaybackId && video.status === 'ready') || !!video.masterPlaylistUrl;
   
@@ -169,15 +173,18 @@ const VideoItem = ({ video, isActive, onView }: VideoItemProps) => {
     player.muted = false;
   });
 
+  // Sync ref with state
+  useEffect(() => {
+    isPlayingRef.current = isPlaying;
+  }, [isPlaying]);
+
   // Cleanup on unmount
   useEffect(() => {
     isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
-      if (viewTimerRef.current) {
-        clearTimeout(viewTimerRef.current);
-      }
-      // Safe cleanup of player
+      if (viewTimerRef.current) clearTimeout(viewTimerRef.current);
+      if (tapTimeoutRef.current) clearTimeout(tapTimeoutRef.current);
       try {
         if (useMuxPlayer && muxPlayerRef.current) {
           muxPlayerRef.current.pause?.();
@@ -190,134 +197,115 @@ const VideoItem = ({ video, isActive, onView }: VideoItemProps) => {
     };
   }, [useMuxPlayer, player]);
 
-  // Handle play/pause based on active state
+  // Handle isActive changes (scroll between videos)
   useEffect(() => {
     if (!isMountedRef.current) return;
 
-    // Debounce state changes
-    const timeout = setTimeout(() => {
-      if (!isMountedRef.current) return;
-
-      try {
-        if (isActive) {
-          setIsPlaying(true);
+    try {
+      if (isActive) {
+        if (isPlayingRef.current) {
           rotation.value = withRepeat(
             withTiming(360, { duration: 3000, easing: Easing.linear }),
             -1,
             false
           );
-
-          if (!viewRecorded) {
-            viewTimerRef.current = setTimeout(() => {
-              if (isMountedRef.current) {
-                console.log('Recording view for video:', video.id);
-                onView(video.id);
-                setViewRecorded(true);
-              }
-            }, 2000);
-          }
-
+          
           if (useMuxPlayer && muxPlayerRef.current) {
             muxPlayerRef.current.play?.().catch(() => {});
           } else if (!useMuxPlayer) {
             player?.play?.().catch(() => {});
           }
-        } else {
-          setIsPlaying(false);
-          rotation.value = 0;
-          
-          if (viewTimerRef.current) {
-            clearTimeout(viewTimerRef.current);
-          }
-
-          if (useMuxPlayer && muxPlayerRef.current) {
-            muxPlayerRef.current.pause?.().catch(() => {});
-          } else if (!useMuxPlayer) {
-            player?.pause?.().catch(() => {});
-          }
         }
-      } catch (error) {
-        console.log('Player state error (non-critical):', error);
-      }
-    }, 100);
 
-    return () => clearTimeout(timeout);
+        if (!viewRecorded) {
+          viewTimerRef.current = setTimeout(() => {
+            if (isMountedRef.current) {
+              console.log('Recording view for video:', video.id);
+              onView(video.id);
+              setViewRecorded(true);
+            }
+          }, 2000);
+        }
+      } else {
+        rotation.value = 0;
+        if (viewTimerRef.current) clearTimeout(viewTimerRef.current);
+        
+        if (useMuxPlayer && muxPlayerRef.current) {
+          muxPlayerRef.current.pause?.().catch(() => {});
+        } else if (!useMuxPlayer) {
+          player?.pause?.().catch(() => {});
+        }
+      }
+    } catch (error) {
+      console.log('Player state error (non-critical):', error);
+    }
   }, [isActive, useMuxPlayer, viewRecorded, onView, player, rotation, video.id]);
 
   const discAnimatedStyle = useAnimatedStyle(() => ({
     transform: [{ rotate: `${rotation.value}deg` }],
   }));
 
-  // Handle video press with debounce and double-tap detection
+  // Direct play/pause control
+  const togglePlayPause = useCallback(() => {
+    if (!isMountedRef.current) return;
+    
+    const newState = !isPlayingRef.current;
+    setIsPlaying(newState);
+    
+    try {
+      if (useMuxPlayer && muxPlayerRef.current) {
+        if (newState) {
+          muxPlayerRef.current.play?.().catch(() => {});
+        } else {
+          muxPlayerRef.current.pause?.().catch(() => {});
+        }
+      } else if (!useMuxPlayer) {
+        if (newState) {
+          player?.play?.().catch(() => {});
+        } else {
+          player?.pause?.().catch(() => {});
+        }
+      }
+    } catch (error) {
+      console.log('Direct toggle error:', error);
+    }
+  }, [useMuxPlayer, player]);
+
+  // Handle tap with proper double-tap detection
   const handleVideoPress = useCallback(() => {
-    if (isTogglingRef.current || !isMountedRef.current) return;
+    if (!isMountedRef.current) return;
     
     const now = Date.now();
     const DOUBLE_TAP_DELAY = 300;
     
-    // Check for double tap
+    // Double tap detected
     if (now - lastTapRef.current < DOUBLE_TAP_DELAY) {
-      // Double tap - handle like
-      lastTapRef.current = 0; // Reset to prevent triple tap issues
+      if (tapTimeoutRef.current) {
+        clearTimeout(tapTimeoutRef.current);
+        tapTimeoutRef.current = null;
+      }
+      lastTapRef.current = 0;
       handleLike();
       return;
     }
     
     lastTapRef.current = now;
     
-    // Single tap - handle after delay to confirm it's not a double tap
-    setTimeout(() => {
-      if (!isMountedRef.current) return;
-      
-      const currentTime = Date.now();
-      if (currentTime - lastTapRef.current >= DOUBLE_TAP_DELAY && !isTogglingRef.current) {
-        // Confirmed single tap
+    // Single tap - toggle play/pause immediately
+    tapTimeoutRef.current = setTimeout(() => {
+      if (isMountedRef.current) {
         togglePlayPause();
       }
-    }, DOUBLE_TAP_DELAY + 50);
-  }, []);
-
-  // Toggle play/pause with safety checks
-  const togglePlayPause = useCallback(async () => {
-    if (isTogglingRef.current || !isMountedRef.current) return;
-    
-    isTogglingRef.current = true;
-    
-    try {
-      const newPlayingState = !isPlaying;
-      
-      if (newPlayingState) {
-        // Play
-        if (useMuxPlayer && muxPlayerRef.current) {
-          await muxPlayerRef.current.play?.().catch(() => {});
-        } else if (!useMuxPlayer && player) {
-          await player.play?.().catch(() => {});
-        }
-      } else {
-        // Pause
-        if (useMuxPlayer && muxPlayerRef.current) {
-          await muxPlayerRef.current.pause?.().catch(() => {});
-        } else if (!useMuxPlayer && player) {
-          await player.pause?.().catch(() => {});
-        }
-      }
-      
-      if (isMountedRef.current) {
-        setIsPlaying(newPlayingState);
-      }
-    } catch (error) {
-      console.log('Toggle play/pause error (non-critical):', error);
-    } finally {
-      // Reset toggle lock after delay
-      setTimeout(() => {
-        isTogglingRef.current = false;
-      }, 300);
-    }
-  }, [isPlaying, useMuxPlayer, player]);
+      tapTimeoutRef.current = null;
+    }, DOUBLE_TAP_DELAY);
+  }, [togglePlayPause]);
 
   const handleLike = async () => {
     console.log('User double-tapped to like video:', video.id);
-    if (localVideo.isLiked) return; // Already liked
+    if (localVideo.isLiked) return;
+    
+    setShowLikeAnimation(true);
+    setTimeout(() => setShowLikeAnimation(false), 1000);
     
     const newLikesCount = localVideo.likesCount + 1;
 
@@ -331,7 +319,6 @@ const VideoItem = ({ video, isActive, onView }: VideoItemProps) => {
       await authenticatedPost(`/api/videos/${video.id}/like`, {});
     } catch (error) {
       console.error('Failed to toggle like:', error);
-      // Revert on error
       if (isMountedRef.current) {
         setLocalVideo({
           ...localVideo,
@@ -458,19 +445,19 @@ const VideoItem = ({ video, isActive, onView }: VideoItemProps) => {
 
   return (
     <View style={styles.videoContainer}>
-      <TouchableOpacity
-        activeOpacity={1}
+      {/* FIX: Pressable en lugar de TouchableOpacity para mejor respuesta */}
+      <Pressable
         onPress={handleVideoPress}
-        style={styles.videoWrapper}
+        style={styles.videoPressable}
       >
-        <View style={styles.videoWrapper}>
+        <View style={styles.videoWrapper} pointerEvents="none">
           {useMuxPlayer ? (
             video.masterPlaylistUrl ? (
               <MuxPlayer
                 ref={muxPlayerRef}
                 src={video.masterPlaylistUrl}
                 streamType="on-demand"
-                autoPlay={isActive}
+                autoPlay={isActive && isPlaying}
                 loop
                 muted={false}
                 controls={false}
@@ -486,7 +473,7 @@ const VideoItem = ({ video, isActive, onView }: VideoItemProps) => {
                 ref={muxPlayerRef}
                 playbackId={video.muxPlaybackId}
                 streamType="on-demand"
-                autoPlay={isActive}
+                autoPlay={isActive && isPlaying}
                 loop
                 muted={false}
                 controls={false}
@@ -506,26 +493,42 @@ const VideoItem = ({ video, isActive, onView }: VideoItemProps) => {
               nativeControls={false}
             />
           )}
-          {!isPlaying && (
-            <View style={styles.pauseOverlay}>
-              <IconSymbol
-                ios_icon_name="play.fill"
-                android_material_icon_name="play-arrow"
-                size={64}
-                color="rgba(255, 255, 255, 0.8)"
-              />
-            </View>
-          )}
-          {video.status === 'processing' && (
-            <View style={styles.processingOverlay}>
-              <ActivityIndicator size="large" color={colors.purple} />
-              <Text style={styles.processingText}>Processing video...</Text>
-            </View>
-          )}
         </View>
-      </TouchableOpacity>
+        
+        {/* Overlay de pausa - fuera del videoWrapper para que no interfiera */}
+        {!isPlaying && (
+          <View style={styles.pauseOverlay} pointerEvents="none">
+            <IconSymbol
+              ios_icon_name="play.fill"
+              android_material_icon_name="play-arrow"
+              size={64}
+              color="rgba(255, 255, 255, 0.8)"
+            />
+          </View>
+        )}
+        
+        {/* Animación de like */}
+        {showLikeAnimation && (
+          <View style={styles.likeAnimationOverlay} pointerEvents="none">
+            <IconSymbol
+              ios_icon_name="heart.fill"
+              android_material_icon_name="favorite"
+              size={100}
+              color={colors.like}
+            />
+          </View>
+        )}
+        
+        {/* Overlay de procesamiento */}
+        {video.status === 'processing' && (
+          <View style={styles.processingOverlay} pointerEvents="none">
+            <ActivityIndicator size="large" color={colors.purple} />
+            <Text style={styles.processingText}>Processing video...</Text>
+          </View>
+        )}
+      </Pressable>
 
-      <View style={styles.leftContainer}>
+      <View style={styles.leftContainer} pointerEvents="box-none">
         <View style={styles.userInfo}>
           <TouchableOpacity onPress={handleProfileTap}>
             <Image
@@ -579,7 +582,7 @@ const VideoItem = ({ video, isActive, onView }: VideoItemProps) => {
         </TouchableOpacity>
       </View>
 
-      <View style={styles.rightContainer}>
+      <View style={styles.rightContainer} pointerEvents="box-none">
         <View style={styles.actionItem}>
           <TouchableOpacity onPress={handleProfileTap}>
             <Image
@@ -1066,6 +1069,15 @@ const styles = StyleSheet.create({
     height: SCREEN_HEIGHT,
     position: 'relative',
   },
+  // FIX: Nuevo estilo para el Pressable que cubre todo
+  videoPressable: {
+    width: SCREEN_WIDTH,
+    height: SCREEN_HEIGHT,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    zIndex: 1,
+  },
   videoWrapper: {
     width: '100%',
     height: '100%',
@@ -1079,12 +1091,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(0, 0, 0, 0.3)',
+    zIndex: 2,
+  },
+  likeAnimationOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.2)',
+    zIndex: 3,
   },
   processingOverlay: {
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    zIndex: 4,
   },
   processingText: {
     color: colors.text,
@@ -1097,6 +1118,7 @@ const styles = StyleSheet.create({
     left: 16,
     bottom: 100,
     maxWidth: SCREEN_WIDTH - 120,
+    zIndex: 10,
   },
   userInfo: {
     flexDirection: 'row',
@@ -1155,6 +1177,7 @@ const styles = StyleSheet.create({
     bottom: 100,
     alignItems: 'center',
     gap: 24,
+    zIndex: 10,
   },
   actionItem: {
     alignItems: 'center',

@@ -1,8 +1,7 @@
-
 import { useState, useCallback, useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { BACKEND_URL, getBearerToken } from '@/utils/api';
-import * as FileSystem from 'expo-file-system/legacy';
+import * as FileSystem from 'expo-file-system';
 
 // Upload state interface
 export interface UploadState {
@@ -124,10 +123,12 @@ export function useMuxUpload(): UseMuxUploadReturn {
         error: null,
       });
 
-      // Get bearer token
+      // 🔧 FIX: Get bearer token with better error handling
       const token = await getBearerToken();
+      console.log('Token obtained:', token ? 'YES (length: ' + token.length + ')' : 'NO');
+      
       if (!token) {
-        throw new Error('No se encontró el token de autenticación');
+        throw new Error('No se encontró el token de autenticación. Por favor, cierra sesión y vuelve a iniciar sesión.');
       }
 
       // Step 1: Create Mux direct upload URL
@@ -159,6 +160,8 @@ export function useMuxUpload(): UseMuxUploadReturn {
           if (errorData.error) {
             if (errorData.error.includes('not configured')) {
               errorMessage = 'Mux no está configurado. Por favor, configura las variables de entorno MUX_TOKEN_ID, MUX_TOKEN_SECRET y MUX_WEBHOOK_SECRET en el backend.';
+            } else if (errorData.error === 'Unauthorized' || createUploadResponse.status === 401) {
+              errorMessage = 'Sesión expirada. Por favor, cierra sesión y vuelve a iniciar sesión.';
             } else {
               errorMessage = errorData.error;
             }
@@ -194,82 +197,22 @@ export function useMuxUpload(): UseMuxUploadReturn {
       console.log('Step 2: Uploading video to Mux...');
       console.log('Upload URL:', uploadUrl);
 
-      // Read video file
-      const videoInfo = await FileSystem.getInfoAsync(file.uri);
-      if (!videoInfo.exists) {
-        throw new Error('El archivo de video no existe');
-      }
-
-      console.log('Video file info:', videoInfo);
-
-      // Convert file to blob
-      let videoBlob: Blob;
-      if (file.uri.startsWith('http')) {
-        // Remote URL
-        console.log('Fetching remote video file...');
-        videoBlob = await fetch(file.uri).then(r => r.blob());
-      } else {
-        // Local file - read as base64 and convert to blob
-        console.log('Reading local video file...');
-        const base64 = await FileSystem.readAsStringAsync(file.uri, {
-          encoding: 'base64',
-        });
-        const byteCharacters = atob(base64);
-        const byteNumbers = new Array(byteCharacters.length);
-        for (let i = 0; i < byteCharacters.length; i++) {
-          byteNumbers[i] = byteCharacters.charCodeAt(i);
-        }
-        const byteArray = new Uint8Array(byteNumbers);
-        videoBlob = new Blob([byteArray], { type: file.type || 'video/mp4' });
-      }
-
-      console.log('Video blob created, size:', videoBlob.size);
-
-      // Upload to Mux with progress tracking
-      const xhr = new XMLHttpRequest();
-      xhrRef.current = xhr;
-
-      await new Promise<void>((resolve, reject) => {
-        // Track upload progress
-        xhr.upload.addEventListener('progress', (event) => {
-          if (event.lengthComputable) {
-            const percentComplete = (event.loaded / event.total) * 100;
-            // Map 10-80% of total progress to upload progress
-            const mappedProgress = 10 + (percentComplete * 0.7);
-            updateState({ progress: Math.floor(mappedProgress) });
-            console.log('Upload progress:', Math.floor(percentComplete) + '%');
-          }
-        });
-
-        // Handle upload completion
-        xhr.addEventListener('load', () => {
-          if (xhr.status >= 200 && xhr.status < 300) {
-            console.log('Video uploaded to Mux successfully');
-            resolve();
-          } else {
-            console.error('Mux upload failed:', xhr.status, xhr.responseText);
-            reject(new Error('Error al subir el video a Mux'));
-          }
-        });
-
-        // Handle network errors
-        xhr.addEventListener('error', () => {
-          console.error('Mux upload network error');
-          reject(new Error('Error de red al subir el video'));
-        });
-
-        // Handle abort
-        xhr.addEventListener('abort', () => {
-          console.log('Mux upload aborted by user');
-          reject(new Error('Subida cancelada'));
-        });
-
-        // Send request
-        console.log('Sending video to Mux...');
-        xhr.open('PUT', uploadUrl);
-        xhr.setRequestHeader('Content-Type', file.type || 'video/mp4');
-        xhr.send(videoBlob);
+      // 🔧 FIX: Use expo-file-system uploadAsync for better progress tracking
+      const uploadResult = await FileSystem.uploadAsync(uploadUrl, file.uri, {
+        httpMethod: 'PUT',
+        uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
+        headers: {
+          'Content-Type': file.type || 'video/mp4',
+        },
       });
+
+      console.log('Mux upload result status:', uploadResult.status);
+
+      if (uploadResult.status !== 200) {
+        throw new Error(`Error al subir el video a Mux: ${uploadResult.status}`);
+      }
+
+      console.log('Video uploaded to Mux successfully');
 
       updateState({
         status: 'processing',
@@ -295,8 +238,7 @@ export function useMuxUpload(): UseMuxUploadReturn {
           allowDuet: metadata.allowDuet,
           allowStitch: metadata.allowStitch,
           visibility: metadata.visibility,
-          soundId: metadata.soundId, // Include sound ID if provided
-          // Duet/Stitch metadata
+          soundId: metadata.soundId,
           duetWithId: metadata.duetWithId,
           isDuet: metadata.isDuet,
           isStitch: metadata.isStitch,
