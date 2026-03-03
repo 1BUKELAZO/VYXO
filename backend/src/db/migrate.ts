@@ -4,9 +4,10 @@ import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import * as schema from './schema.js';
 
 const connectionString = process.env.DATABASE_URL;
+
 if (!connectionString) {
-  console.error('DATABASE_URL not set');
-  process.exit(1);
+  console.log('DATABASE_URL not set, skipping migrations');
+  process.exit(0);
 }
 
 const client = postgres(connectionString);
