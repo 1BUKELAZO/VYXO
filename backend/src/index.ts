@@ -62,249 +62,161 @@ export const app = {
       return null;
     }
   },
-  withAuth: () => {
-    // JWT se registra una sola vez aquí
-  },
-  withStorage: () => {
-    // Storage implementation if needed
-  }
+  withAuth: () => {},
+  withStorage: () => {}
 };
 
 export type App = typeof app;
 
-// Register plugins
-await fastify.register(cors, {
-  origin: true,
-  credentials: true
-});
+// ============================================
+// CREAR TABLAS NECESARIAS
+// ============================================
 
-await fastify.register(multipart);
-await fastify.register(websocket);
-await fastify.register(swagger, {
-  openapi: {
-    info: {
-      title: 'VYXO API',
-      description: 'VYXO Backend API',
-      version: '1.0.0'
-    }
-  }
-});
-
-// JWT setup - SOLO UNA VEZ AQUÍ
-fastify.register(jwt, {
-  secret: process.env.JWT_SECRET || 'your-secret-key'
-});
-
-// Auth decorator
-fastify.decorate("authenticate", async function(request: any, reply: any) {
+async function createTables() {
+  console.log('🔄 Creando tablas necesarias...');
+  
   try {
-    await request.jwtVerify();
-  } catch (err) {
-    reply.send(err);
-  }
-});
-
-// Database verification functions
-async function ensurePasswordColumn() {
-  try {
-    console.log('🔍 Verificando columna password en tabla user...');
-    
-    const result = await db.execute(sql`
-      SELECT column_name 
-      FROM information_schema.columns 
-      WHERE table_name = 'user' 
-      AND column_name = 'password'
-      AND table_schema = 'public'
+    // 1. Crear tabla user (primero porque otras tablas dependen de ella)
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "user" (
+        "id" text PRIMARY KEY,
+        "name" text,
+        "email" text NOT NULL UNIQUE,
+        "email_verified" timestamp,
+        "image" text,
+        "password" text,
+        "role" text DEFAULT 'user',
+        "is_banned" boolean DEFAULT false,
+        "banned_at" timestamp,
+        "banned_by" text,
+        "created_at" timestamp DEFAULT now(),
+        "updated_at" timestamp DEFAULT now()
+      )
     `);
-    
-    if (result.length === 0) {
-      console.log('⚠️  Columna password no encontrada. Ejecutando ALTER TABLE...');
-      await db.execute(sql`
-        ALTER TABLE "user" 
-        ADD COLUMN IF NOT EXISTS "password" text
-      `);
-      console.log('✅ Columna password creada exitosamente');
-    } else {
-      console.log('✅ Columna password ya existe');
-    }
+    console.log('✅ Tabla user creada');
+
+    // 2. Crear tabla refresh_token
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "refresh_token" (
+        "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        "user_id" text NOT NULL REFERENCES "user"("id") ON DELETE cascade,
+        "token" text NOT NULL UNIQUE,
+        "expires_at" timestamp NOT NULL,
+        "created_at" timestamp DEFAULT now() NOT NULL,
+        "revoked_at" timestamp
+      )
+    `);
+    console.log('✅ Tabla refresh_token creada');
+
+    // 3. Crear tabla videos
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "videos" (
+        "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        "video_url" text NOT NULL,
+        "thumbnail_url" text,
+        "caption" text,
+        "user_id" text NOT NULL REFERENCES "user"("id") ON DELETE cascade,
+        "duration" integer,
+        "status" text DEFAULT 'processing',
+        "likes_count" integer DEFAULT 0,
+        "comments_count" integer DEFAULT 0,
+        "shares_count" integer DEFAULT 0,
+        "views_count" integer DEFAULT 0,
+        "allow_comments" boolean DEFAULT true,
+        "allow_duets" boolean DEFAULT true,
+        "allow_stitches" boolean DEFAULT true,
+        "created_at" timestamp DEFAULT now(),
+        "updated_at" timestamp DEFAULT now()
+      )
+    `);
+    console.log('✅ Tabla videos creada');
+
+    // 4. Crear tabla gifts
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "gifts" (
+        "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        "name" text NOT NULL,
+        "icon" text NOT NULL,
+        "price_coins" integer NOT NULL,
+        "value_coins" integer NOT NULL,
+        "animation_url" text,
+        "created_at" timestamp DEFAULT now()
+      )
+    `);
+    console.log('✅ Tabla gifts creada');
+
+    // 5. Crear tabla coin_packages
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "coin_packages" (
+        "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        "name" text NOT NULL,
+        "coins" integer NOT NULL,
+        "price_usd" text NOT NULL,
+        "is_active" boolean DEFAULT true,
+        "created_at" timestamp DEFAULT now()
+      )
+    `);
+    console.log('✅ Tabla coin_packages creada');
+
+    // 6. Crear tabla accounts (para better-auth)
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "account" (
+        "id" text PRIMARY KEY,
+        "account_id" text NOT NULL,
+        "provider_id" text NOT NULL,
+        "user_id" text NOT NULL REFERENCES "user"("id") ON DELETE cascade,
+        "access_token" text,
+        "refresh_token" text,
+        "id_token" text,
+        "access_token_expires_at" timestamp,
+        "refresh_token_expires_at" timestamp,
+        "scope" text,
+        "password" text,
+        "created_at" timestamp DEFAULT now(),
+        "updated_at" timestamp DEFAULT now()
+      )
+    `);
+    console.log('✅ Tabla account creada');
+
+    // 7. Crear tabla sessions (para better-auth)
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "session" (
+        "id" text PRIMARY KEY,
+        "expires_at" timestamp NOT NULL,
+        "token" text NOT NULL UNIQUE,
+        "created_at" timestamp DEFAULT now(),
+        "updated_at" timestamp DEFAULT now(),
+        "ip_address" text,
+        "user_agent" text,
+        "user_id" text NOT NULL REFERENCES "user"("id") ON DELETE cascade
+      )
+    `);
+    console.log('✅ Tabla session creada');
+
+    // 8. Crear tabla verifications (para better-auth)
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "verification" (
+        "id" text PRIMARY KEY,
+        "identifier" text NOT NULL,
+        "value" text NOT NULL,
+        "expires_at" timestamp NOT NULL,
+        "created_at" timestamp DEFAULT now(),
+        "updated_at" timestamp DEFAULT now()
+      )
+    `);
+    console.log('✅ Tabla verification creada');
+
+    console.log('✅ Todas las tablas creadas exitosamente');
   } catch (error) {
-    console.error('❌ Error al verificar/crear columna password:', error);
+    console.error('❌ Error creando tablas:', error);
+    throw error;
   }
 }
-
-async function ensureRefreshTokenTable() {
-  try {
-    console.log('🔍 Verificando tabla refresh_token...');
-    
-    const result = await db.execute(sql`
-      SELECT table_name 
-      FROM information_schema.tables 
-      WHERE table_name = 'refresh_token' 
-      AND table_schema = 'public'
-    `);
-    
-    if (result.length === 0) {
-      console.log('⚠️  Tabla refresh_token no encontrada. Creando...');
-      
-      await db.execute(sql`
-        CREATE TABLE IF NOT EXISTS "refresh_token" (
-          "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-          "user_id" text NOT NULL REFERENCES "user"("id") ON DELETE cascade,
-          "token" text NOT NULL UNIQUE,
-          "expires_at" timestamp NOT NULL,
-          "created_at" timestamp DEFAULT now() NOT NULL,
-          "revoked_at" timestamp
-        )
-      `);
-      
-      console.log('✅ Tabla refresh_token creada exitosamente');
-    } else {
-      console.log('✅ Tabla refresh_token ya existe');
-    }
-  } catch (error) {
-    console.error('❌ Error al crear tabla refresh_token:', error);
-  }
-}
-
-// Run verifications
-await ensurePasswordColumn();
-await ensureRefreshTokenTable();
-
-// Initialize auth
-app.withAuth();
-registerAuthRoutes(app);
-
-// Initialize storage
-app.withStorage();
-
-// Register all routes
-registerVideoRoutes(app);
-registerUserRoutes(app);
-registerCommentRoutes(app);
-registerMessageRoutes(app);
-registerNotificationRoutes(app);
-registerSearchRoutes(app);
-registerLiveRoutes(app);
-registerReportRoutes(app);
-registerBlockRoutes(app);
-registerMuxRoutes(app);
-registerSoundRoutes(app);
-registerFeedRoutes(app);
-registerHashtagRoutes(app);
-registerVideoReplyRoutes(app);
-registerDuetRoutes(app);
-registerCreatorRoutes(app);
-registerGiftRoutes(app);
-registerSubscriptionRoutes(app);
-registerAdRoutes(app);
-registerAnalyticsRoutes(app);
-registerAdminRoutes(app);
-
-// Seed endpoint
-fastify.post('/api/seed', async (request, reply) => {
-  fastify.log.info('Public seed endpoint called');
-
-  try {
-    const [firstUser] = await db
-      .select({ id: authSchema.user.id })
-      .from(authSchema.user)
-      .limit(1);
-
-    if (!firstUser) {
-      return reply.code(400).send({
-        success: false,
-        error: 'No users found. Please register a user first.'
-      });
-    }
-
-    const userId = firstUser.id;
-
-    const existingVideos = await db
-      .select({ count: sql<number>`count(*)` })
-      .from(appSchema.videos)
-      .where(sql`${appSchema.videos.userId} = ${userId}`);
-
-    if (existingVideos[0]?.count > 0) {
-      fastify.log.info({ userId, count: existingVideos[0].count }, 'Videos already exist');
-      return {
-        success: true,
-        message: 'Videos already exist for this user',
-        videos: existingVideos[0].count,
-      };
-    }
-
-    const sampleVideos = [
-      {
-        videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-        thumbnailUrl: 'https://images.unsplash.com/photo-1574158622682-e40e69881006?w=400',
-        caption: 'Amazing nature documentary 🌿 #nature #wildlife',
-        userId,
-        duration: 30,
-        status: 'ready',
-        likesCount: 0,
-        commentsCount: 0,
-        sharesCount: 0,
-        viewsCount: 0,
-        allowComments: true,
-        allowDuets: true,
-        allowStitches: true,
-      },
-      {
-        videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4',
-        thumbnailUrl: 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=400',
-        caption: 'Creative animation showcase ✨ #animation #art',
-        userId,
-        duration: 25,
-        status: 'ready',
-        likesCount: 0,
-        commentsCount: 0,
-        sharesCount: 0,
-        viewsCount: 0,
-        allowComments: true,
-        allowDuets: true,
-        allowStitches: true,
-      },
-      {
-        videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
-        thumbnailUrl: 'https://images.unsplash.com/photo-1492691527719-9d1e07e534b4?w=400',
-        caption: 'Epic adventure compilation 🎬 #adventure #travel',
-        userId,
-        duration: 20,
-        status: 'ready',
-        likesCount: 0,
-        commentsCount: 0,
-        sharesCount: 0,
-        viewsCount: 0,
-        allowComments: true,
-        allowDuets: true,
-        allowStitches: true,
-      },
-    ];
-
-    const insertedVideos = await db
-      .insert(appSchema.videos)
-      .values(sampleVideos)
-      .returning();
-
-    fastify.log.info({ videos: insertedVideos.length }, 'Sample videos seeded');
-
-    return {
-      success: true,
-      message: 'Sample videos created successfully',
-      videos: insertedVideos.length,
-    };
-  } catch (error) {
-    fastify.log.error({ err: error }, 'Failed to seed sample videos');
-    return reply.code(500).send({
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
-    });
-  }
-});
 
 // Seed initial data
 async function seedInitialData() {
   try {
+    // Verificar si gifts ya tiene datos
     const existingGifts = await db.select().from(appSchema.gifts).limit(1);
     if (existingGifts.length === 0) {
       await db.insert(appSchema.gifts).values([
@@ -313,9 +225,10 @@ async function seedInitialData() {
         { name: 'Diamond', icon: '💎', priceCoins: 1000, valueCoins: 700 },
         { name: 'Crown', icon: '👑', priceCoins: 5000, valueCoins: 3500 },
       ]);
-      fastify.log.info('Gifts seeded');
+      console.log('✅ Gifts seeded');
     }
 
+    // Verificar si coin_packages ya tiene datos
     const existingPackages = await db.select().from(appSchema.coinPackages).limit(1);
     if (existingPackages.length === 0) {
       await db.insert(appSchema.coinPackages).values([
@@ -324,23 +237,190 @@ async function seedInitialData() {
         { name: 'Value Pack', coins: 1000, priceUsd: '9.99', isActive: true },
         { name: 'Premium Pack', coins: 5000, priceUsd: '49.99', isActive: true },
       ]);
-      fastify.log.info('Coin packages seeded');
+      console.log('✅ Coin packages seeded');
     }
   } catch (error) {
-    fastify.log.warn({ err: error }, 'Failed to seed initial data');
+    console.warn('⚠️  Error en seeding:', error);
   }
 }
 
-await seedInitialData();
+// Main startup function
+async function start() {
+  // PASO 1: Crear tablas primero
+  await createTables();
 
-// Start server
-const port = parseInt(process.env.PORT || '10000');
-const host = process.env.HOST || '0.0.0.0';
+  // PASO 2: Registrar plugins
+  await fastify.register(cors, {
+    origin: true,
+    credentials: true
+  });
 
-try {
-  await fastify.listen({ port, host });
-  fastify.log.info(`Server listening on ${host}:${port}`);
-} catch (err) {
-  fastify.log.error(err);
-  process.exit(1);
+  await fastify.register(multipart);
+  await fastify.register(websocket);
+  await fastify.register(swagger, {
+    openapi: {
+      info: {
+        title: 'VYXO API',
+        description: 'VYXO Backend API',
+        version: '1.0.0'
+      }
+    }
+  });
+
+  // JWT setup
+  fastify.register(jwt, {
+    secret: process.env.JWT_SECRET || 'your-secret-key'
+  });
+
+  // Auth decorator
+  fastify.decorate("authenticate", async function(request: any, reply: any) {
+    try {
+      await request.jwtVerify();
+    } catch (err) {
+      reply.send(err);
+    }
+  });
+
+  // PASO 3: Inicializar auth y rutas
+  app.withAuth();
+  registerAuthRoutes(app);
+  app.withStorage();
+
+  // Register all routes
+  registerVideoRoutes(app);
+  registerUserRoutes(app);
+  registerCommentRoutes(app);
+  registerMessageRoutes(app);
+  registerNotificationRoutes(app);
+  registerSearchRoutes(app);
+  registerLiveRoutes(app);
+  registerReportRoutes(app);
+  registerBlockRoutes(app);
+  registerMuxRoutes(app);
+  registerSoundRoutes(app);
+  registerFeedRoutes(app);
+  registerHashtagRoutes(app);
+  registerVideoReplyRoutes(app);
+  registerDuetRoutes(app);
+  registerCreatorRoutes(app);
+  registerGiftRoutes(app);
+  registerSubscriptionRoutes(app);
+  registerAdRoutes(app);
+  registerAnalyticsRoutes(app);
+  registerAdminRoutes(app);
+
+  // PASO 4: Seed endpoint
+  fastify.post('/api/seed', async (request, reply) => {
+    try {
+      const [firstUser] = await db
+        .select({ id: authSchema.user.id })
+        .from(authSchema.user)
+        .limit(1);
+
+      if (!firstUser) {
+        return reply.code(400).send({
+          success: false,
+          error: 'No users found. Please register a user first.'
+        });
+      }
+
+      const userId = firstUser.id;
+
+      const existingVideos = await db
+        .select({ count: sql<number>`count(*)` })
+        .from(appSchema.videos)
+        .where(sql`${appSchema.videos.userId} = ${userId}`);
+
+      if (existingVideos[0]?.count > 0) {
+        return {
+          success: true,
+          message: 'Videos already exist',
+          videos: existingVideos[0].count,
+        };
+      }
+
+      const sampleVideos = [
+        {
+          videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+          thumbnailUrl: 'https://images.unsplash.com/photo-1574158622682-e40e69881006?w=400',
+          caption: 'Amazing nature documentary 🌿 #nature #wildlife',
+          userId,
+          duration: 30,
+          status: 'ready',
+          likesCount: 0,
+          commentsCount: 0,
+          sharesCount: 0,
+          viewsCount: 0,
+          allowComments: true,
+          allowDuets: true,
+          allowStitches: true,
+        },
+        {
+          videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4',
+          thumbnailUrl: 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=400',
+          caption: 'Creative animation showcase ✨ #animation #art',
+          userId,
+          duration: 25,
+          status: 'ready',
+          likesCount: 0,
+          commentsCount: 0,
+          sharesCount: 0,
+          viewsCount: 0,
+          allowComments: true,
+          allowDuets: true,
+          allowStitches: true,
+        },
+        {
+          videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
+          thumbnailUrl: 'https://images.unsplash.com/photo-1492691527719-9d1e07e534b4?w=400',
+          caption: 'Epic adventure compilation 🎬 #adventure #travel',
+          userId,
+          duration: 20,
+          status: 'ready',
+          likesCount: 0,
+          commentsCount: 0,
+          sharesCount: 0,
+          viewsCount: 0,
+          allowComments: true,
+          allowDuets: true,
+          allowStitches: true,
+        },
+      ];
+
+      const insertedVideos = await db
+        .insert(appSchema.videos)
+        .values(sampleVideos)
+        .returning();
+
+      return {
+        success: true,
+        message: 'Sample videos created',
+        videos: insertedVideos.length,
+      };
+    } catch (error) {
+      console.error('Seed error:', error);
+      return reply.code(500).send({
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+  });
+
+  // PASO 5: Seed initial data
+  await seedInitialData();
+
+  // PASO 6: Start server
+  const port = parseInt(process.env.PORT || '10000');
+  const host = process.env.HOST || '0.0.0.0';
+
+  try {
+    await fastify.listen({ port, host });
+    console.log(`🚀 Server listening on ${host}:${port}`);
+  } catch (err) {
+    console.error('Server error:', err);
+    process.exit(1);
+  }
 }
+
+// Start the application
+start();

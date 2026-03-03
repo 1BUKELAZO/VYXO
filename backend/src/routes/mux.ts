@@ -432,7 +432,7 @@ export function registerMuxRoutes(app: App) {
         }
 
         // URL SIN ESPACIO DESPUÉS DEL DOMINIO
-        const playbackUrl = `https://stream.mux.com/${video.muxPlaybackId}.m3u8`;
+       const playbackUrl = `https://stream.mux.com/${video.muxPlaybackId}.m3u8`;
 
         app.logger.info({ videoId, status: video.status }, 'Playback information retrieved');
 
