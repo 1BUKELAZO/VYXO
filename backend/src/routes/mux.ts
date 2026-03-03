@@ -71,7 +71,7 @@ export function registerMuxRoutes(app: App) {
         // Create base64 auth header
         const auth = Buffer.from(`${MUX_TOKEN_ID}:${MUX_TOKEN_SECRET}`).toString('base64');
 
-        // URL sin espacio al final
+        // URL SIN ESPACIO AL FINAL
         const muxResponse = await fetch('https://api.mux.com/video/v1/uploads', {
           method: 'POST',
           headers: {
@@ -197,7 +197,7 @@ export function registerMuxRoutes(app: App) {
         // Create base64 auth header
         const auth = Buffer.from(`${MUX_TOKEN_ID}:${MUX_TOKEN_SECRET}`).toString('base64');
 
-        // URL sin espacio al final
+        // URL SIN ESPACIO AL FINAL
         const muxResponse = await fetch('https://api.mux.com/video/v1/uploads', {
           method: 'POST',
           headers: {
@@ -315,7 +315,7 @@ export function registerMuxRoutes(app: App) {
           const maxResolution = data.max_stored_resolution;
 
           if (playbackId) {
-            // URLs sin espacios
+            // URLs SIN ESPACIOS DESPUÉS DEL DOMINIO
             const masterPlaylistUrl = `https://stream.mux.com/${playbackId}.m3u8`;
             const muxThumbnailUrl = `https://image.mux.com/${playbackId}/thumbnail.jpg?width=640&height=1138&fit_mode=smartcrop&time=1`;
             const gifUrl = `https://image.mux.com/${playbackId}/animated.gif?width=320&height=569&fps=15`;
@@ -431,7 +431,7 @@ export function registerMuxRoutes(app: App) {
           return reply.code(400).send({ success: false, error: 'Video not ready yet' });
         }
 
-        // URL sin espacio
+        // URL SIN ESPACIO DESPUÉS DEL DOMINIO
         const playbackUrl = `https://stream.mux.com/${video.muxPlaybackId}.m3u8`;
 
         app.logger.info({ videoId, status: video.status }, 'Playback information retrieved');

@@ -7,7 +7,7 @@
     "dev": "tsx watch src/index.ts",
     "build": "esbuild src/index.ts --bundle --outdir=dist --platform=node --target=node20 --format=esm --packages=external --sourcemap",
     "typecheck": "tsc --noEmit",
-    "start": "node --import @specific-dev/framework/telemetry dist/index.js",
+    "start": "node dist/index.js",
     "db:generate": "tsx node_modules/drizzle-kit/bin.cjs generate",
     "db:migrate": "tsx src/db/migrate.ts",
     "db:push": "npm run db:generate && npm run db:migrate"
@@ -19,7 +19,6 @@
     "@fastify/swagger": "^9.5.2",
     "@neondatabase/serverless": "^1.0.2",
     "@fastify/websocket": "^11.2.0",
-    "@specific-dev/framework": "1.25.2",
     "bcrypt": "^5.1.1",
     "better-auth": "1.4.5",
     "commander": "^12.1.0",
