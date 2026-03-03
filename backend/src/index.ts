@@ -1,7 +1,16 @@
-import { createApplication } from "@specific-dev/framework";
+import Fastify from 'fastify';
+import cors from '@fastify/cors';
+import jwt from '@fastify/jwt';
+import multipart from '@fastify/multipart';
+import websocket from '@fastify/websocket';
+import swagger from '@fastify/swagger';
 import { sql } from "drizzle-orm";
+import { drizzle } from 'drizzle-orm/postgres-js';
+import postgres from 'postgres';
 import * as appSchema from './db/schema.js';
 import * as authSchema from './db/auth-schema.js';
+
+// Route imports
 import { registerVideoRoutes } from './routes/videos.js';
 import { registerUserRoutes } from './routes/users.js';
 import { registerCommentRoutes } from './routes/comments.js';
@@ -25,21 +34,82 @@ import { registerAnalyticsRoutes } from './routes/analytics.js';
 import { registerAdminRoutes } from './routes/admin.js';
 import { registerAuthRoutes } from './routes/auth.js';
 
-// Merge app and auth schemas
-const schema = { ...appSchema, ...authSchema };
+// Database setup
+const connectionString = process.env.DATABASE_URL;
+if (!connectionString) {
+  throw new Error('DATABASE_URL not set');
+}
 
-// Create application with combined schema
-export const app = await createApplication(schema);
+const client = postgres(connectionString);
+const db = drizzle(client, { schema: { ...appSchema, ...authSchema } });
 
-// Export App type for use in route files
+// Fastify instance
+const fastify = Fastify({
+  logger: true
+});
+
+// Export for route files
+export const app = {
+  fastify,
+  db,
+  logger: fastify.log,
+  requireAuth: () => async (request: any, reply: any) => {
+    try {
+      await request.jwtVerify();
+      return { user: request.user };
+    } catch (err) {
+      reply.code(401).send({ error: 'Unauthorized' });
+      return null;
+    }
+  },
+  withAuth: () => {
+    // JWT se registra una sola vez aquí
+  },
+  withStorage: () => {
+    // Storage implementation if needed
+  }
+};
+
 export type App = typeof app;
 
-// 🚀 VERIFICACIÓN DE COLUMNA PASSWORD ANTES DE INICIAR AUTH
+// Register plugins
+await fastify.register(cors, {
+  origin: true,
+  credentials: true
+});
+
+await fastify.register(multipart);
+await fastify.register(websocket);
+await fastify.register(swagger, {
+  openapi: {
+    info: {
+      title: 'VYXO API',
+      description: 'VYXO Backend API',
+      version: '1.0.0'
+    }
+  }
+});
+
+// JWT setup - SOLO UNA VEZ AQUÍ
+fastify.register(jwt, {
+  secret: process.env.JWT_SECRET || 'your-secret-key'
+});
+
+// Auth decorator
+fastify.decorate("authenticate", async function(request: any, reply: any) {
+  try {
+    await request.jwtVerify();
+  } catch (err) {
+    reply.send(err);
+  }
+});
+
+// Database verification functions
 async function ensurePasswordColumn() {
   try {
     console.log('🔍 Verificando columna password en tabla user...');
     
-    const result = await app.db.execute(sql`
+    const result = await db.execute(sql`
       SELECT column_name 
       FROM information_schema.columns 
       WHERE table_name = 'user' 
@@ -47,9 +117,9 @@ async function ensurePasswordColumn() {
       AND table_schema = 'public'
     `);
     
-    if (result.rows.length === 0) {
+    if (result.length === 0) {
       console.log('⚠️  Columna password no encontrada. Ejecutando ALTER TABLE...');
-      await app.db.execute(sql`
+      await db.execute(sql`
         ALTER TABLE "user" 
         ADD COLUMN IF NOT EXISTS "password" text
       `);
@@ -59,26 +129,24 @@ async function ensurePasswordColumn() {
     }
   } catch (error) {
     console.error('❌ Error al verificar/crear columna password:', error);
-    // No lanzamos error para no bloquear el inicio
   }
 }
 
-// 🚀 VERIFICACIÓN DE TABLA REFRESH_TOKEN
 async function ensureRefreshTokenTable() {
   try {
     console.log('🔍 Verificando tabla refresh_token...');
     
-    const result = await app.db.execute(sql`
+    const result = await db.execute(sql`
       SELECT table_name 
       FROM information_schema.tables 
       WHERE table_name = 'refresh_token' 
       AND table_schema = 'public'
     `);
     
-    if (result.rows.length === 0) {
+    if (result.length === 0) {
       console.log('⚠️  Tabla refresh_token no encontrada. Creando...');
       
-      await app.db.execute(sql`
+      await db.execute(sql`
         CREATE TABLE IF NOT EXISTS "refresh_token" (
           "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
           "user_id" text NOT NULL REFERENCES "user"("id") ON DELETE cascade,
@@ -95,22 +163,21 @@ async function ensureRefreshTokenTable() {
     }
   } catch (error) {
     console.error('❌ Error al crear tabla refresh_token:', error);
-    // No lanzamos error para no bloquear el inicio
   }
 }
 
-// Ejecutar verificaciones antes de inicializar auth
+// Run verifications
 await ensurePasswordColumn();
 await ensureRefreshTokenTable();
 
-// Initialize authentication
+// Initialize auth
 app.withAuth();
 registerAuthRoutes(app);
 
 // Initialize storage
 app.withStorage();
 
-// Register route modules
+// Register all routes
 registerVideoRoutes(app);
 registerUserRoutes(app);
 registerCommentRoutes(app);
@@ -133,205 +200,147 @@ registerAdRoutes(app);
 registerAnalyticsRoutes(app);
 registerAdminRoutes(app);
 
-// 🚀 PUBLIC SEED ENDPOINT - No authentication required
-// IMPORTANTE: Este endpoint debe ir DESPUÉS de registrar todas las rutas
-app.fastify.post(
-  '/api/seed',
-  {
-    schema: {
-      description: 'Seed sample videos for testing (public endpoint)',
-      tags: ['seed'],
-      response: {
-        200: {
-          type: 'object',
-          properties: {
-            success: { type: 'boolean' },
-            message: { type: 'string' },
-            videos: { type: 'number' },
-          },
-        },
-      },
-    },
-  },
-  async (request, reply) => {
-    app.logger.info('Public seed endpoint called');
+// Seed endpoint
+fastify.post('/api/seed', async (request, reply) => {
+  fastify.log.info('Public seed endpoint called');
 
-    try {
-      // Get first available user to associate with seeded data
-      const [firstUser] = await app.db
-        .select({ id: authSchema.user.id })
-        .from(authSchema.user)
-        .limit(1);
+  try {
+    const [firstUser] = await db
+      .select({ id: authSchema.user.id })
+      .from(authSchema.user)
+      .limit(1);
 
-      if (!firstUser) {
-        return reply.code(400).send({
-          success: false,
-          error: 'No users found. Please register a user first.'
-        });
-      }
-
-      const userId = firstUser.id;
-
-      // Check if videos already exist for this user
-      const existingVideos = await app.db
-        .select({ count: sql<number>`count(*)` })
-        .from(appSchema.videos)
-        .where(sql`${appSchema.videos.userId} = ${userId}`);
-
-      if (existingVideos[0]?.count > 0) {
-        app.logger.info({ userId, count: existingVideos[0].count }, 'Videos already exist for user');
-        return {
-          success: true,
-          message: 'Videos already exist for this user',
-          videos: existingVideos[0].count,
-        };
-      }
-
-      // Sample videos - 🔧 FIX: URLs sin espacios al final
-      const sampleVideos = [
-        {
-          videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-          thumbnailUrl: 'https://images.unsplash.com/photo-1574158622682-e40e69881006?w=400',
-          caption: 'Amazing nature documentary 🌿 #nature #wildlife',
-          userId,
-          duration: 30,
-          status: 'ready',
-          likesCount: 0,
-          commentsCount: 0,
-          sharesCount: 0,
-          viewsCount: 0,
-          allowComments: true,
-          allowDuets: true,
-          allowStitches: true,
-        },
-        {
-          videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4',
-          thumbnailUrl: 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=400',
-          caption: 'Creative animation showcase ✨ #animation #art',
-          userId,
-          duration: 25,
-          status: 'ready',
-          likesCount: 0,
-          commentsCount: 0,
-          sharesCount: 0,
-          viewsCount: 0,
-          allowComments: true,
-          allowDuets: true,
-          allowStitches: true,
-        },
-        {
-          videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
-          thumbnailUrl: 'https://images.unsplash.com/photo-1492691527719-9d1e07e534b4?w=400',
-          caption: 'Epic adventure compilation 🎬 #adventure #travel',
-          userId,
-          duration: 20,
-          status: 'ready',
-          likesCount: 0,
-          commentsCount: 0,
-          sharesCount: 0,
-          viewsCount: 0,
-          allowComments: true,
-          allowDuets: true,
-          allowStitches: true,
-        },
-      ];
-
-      // Insert videos
-      const insertedVideos = await app.db
-        .insert(appSchema.videos)
-        .values(sampleVideos)
-        .returning();
-
-      app.logger.info(
-        { videos: insertedVideos.length }, 
-        'Sample videos seeded successfully'
-      );
-
-      return {
-        success: true,
-        message: 'Sample videos created successfully',
-        videos: insertedVideos.length,
-      };
-    } catch (error) {
-      app.logger.error({ err: error }, 'Failed to seed sample videos');
-      return reply.code(500).send({
+    if (!firstUser) {
+      return reply.code(400).send({
         success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
+        error: 'No users found. Please register a user first.'
       });
     }
-  }
-);
 
-// Seed initial gifts and coin packages if needed
+    const userId = firstUser.id;
+
+    const existingVideos = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(appSchema.videos)
+      .where(sql`${appSchema.videos.userId} = ${userId}`);
+
+    if (existingVideos[0]?.count > 0) {
+      fastify.log.info({ userId, count: existingVideos[0].count }, 'Videos already exist');
+      return {
+        success: true,
+        message: 'Videos already exist for this user',
+        videos: existingVideos[0].count,
+      };
+    }
+
+    const sampleVideos = [
+      {
+        videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+        thumbnailUrl: 'https://images.unsplash.com/photo-1574158622682-e40e69881006?w=400',
+        caption: 'Amazing nature documentary 🌿 #nature #wildlife',
+        userId,
+        duration: 30,
+        status: 'ready',
+        likesCount: 0,
+        commentsCount: 0,
+        sharesCount: 0,
+        viewsCount: 0,
+        allowComments: true,
+        allowDuets: true,
+        allowStitches: true,
+      },
+      {
+        videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4',
+        thumbnailUrl: 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=400',
+        caption: 'Creative animation showcase ✨ #animation #art',
+        userId,
+        duration: 25,
+        status: 'ready',
+        likesCount: 0,
+        commentsCount: 0,
+        sharesCount: 0,
+        viewsCount: 0,
+        allowComments: true,
+        allowDuets: true,
+        allowStitches: true,
+      },
+      {
+        videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
+        thumbnailUrl: 'https://images.unsplash.com/photo-1492691527719-9d1e07e534b4?w=400',
+        caption: 'Epic adventure compilation 🎬 #adventure #travel',
+        userId,
+        duration: 20,
+        status: 'ready',
+        likesCount: 0,
+        commentsCount: 0,
+        sharesCount: 0,
+        viewsCount: 0,
+        allowComments: true,
+        allowDuets: true,
+        allowStitches: true,
+      },
+    ];
+
+    const insertedVideos = await db
+      .insert(appSchema.videos)
+      .values(sampleVideos)
+      .returning();
+
+    fastify.log.info({ videos: insertedVideos.length }, 'Sample videos seeded');
+
+    return {
+      success: true,
+      message: 'Sample videos created successfully',
+      videos: insertedVideos.length,
+    };
+  } catch (error) {
+    fastify.log.error({ err: error }, 'Failed to seed sample videos');
+    return reply.code(500).send({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+// Seed initial data
 async function seedInitialData() {
   try {
-    const existingGifts = await app.db.select().from(schema.gifts).limit(1);
+    const existingGifts = await db.select().from(appSchema.gifts).limit(1);
     if (existingGifts.length === 0) {
-      await app.db.insert(schema.gifts).values([
-        {
-          name: 'Rose',
-          icon: '🌹',
-          priceCoins: 10,
-          valueCoins: 7,
-        },
-        {
-          name: 'Rocket',
-          icon: '🚀',
-          priceCoins: 100,
-          valueCoins: 70,
-        },
-        {
-          name: 'Diamond',
-          icon: '💎',
-          priceCoins: 1000,
-          valueCoins: 700,
-        },
-        {
-          name: 'Crown',
-          icon: '👑',
-          priceCoins: 5000,
-          valueCoins: 3500,
-        },
+      await db.insert(appSchema.gifts).values([
+        { name: 'Rose', icon: '🌹', priceCoins: 10, valueCoins: 7 },
+        { name: 'Rocket', icon: '🚀', priceCoins: 100, valueCoins: 70 },
+        { name: 'Diamond', icon: '💎', priceCoins: 1000, valueCoins: 700 },
+        { name: 'Crown', icon: '👑', priceCoins: 5000, valueCoins: 3500 },
       ]);
-      app.logger.info('Gifts seeded');
+      fastify.log.info('Gifts seeded');
     }
 
-    const existingPackages = await app.db.select().from(schema.coinPackages).limit(1);
+    const existingPackages = await db.select().from(appSchema.coinPackages).limit(1);
     if (existingPackages.length === 0) {
-      await app.db.insert(schema.coinPackages).values([
-        {
-          name: 'Starter Pack',
-          coins: 100,
-          priceUsd: '0.99',
-          isActive: true,
-        },
-        {
-          name: 'Popular Pack',
-          coins: 500,
-          priceUsd: '4.99',
-          isActive: true,
-        },
-        {
-          name: 'Value Pack',
-          coins: 1000,
-          priceUsd: '9.99',
-          isActive: true,
-        },
-        {
-          name: 'Premium Pack',
-          coins: 5000,
-          priceUsd: '49.99',
-          isActive: true,
-        },
+      await db.insert(appSchema.coinPackages).values([
+        { name: 'Starter Pack', coins: 100, priceUsd: '0.99', isActive: true },
+        { name: 'Popular Pack', coins: 500, priceUsd: '4.99', isActive: true },
+        { name: 'Value Pack', coins: 1000, priceUsd: '9.99', isActive: true },
+        { name: 'Premium Pack', coins: 5000, priceUsd: '49.99', isActive: true },
       ]);
-      app.logger.info('Coin packages seeded');
+      fastify.log.info('Coin packages seeded');
     }
   } catch (error) {
-    app.logger.warn({ err: error }, 'Failed to seed initial data');
+    fastify.log.warn({ err: error }, 'Failed to seed initial data');
   }
 }
 
 await seedInitialData();
 
-await app.run();
-app.logger.info('Application running');
+// Start server
+const port = parseInt(process.env.PORT || '10000');
+const host = process.env.HOST || '0.0.0.0';
+
+try {
+  await fastify.listen({ port, host });
+  fastify.log.info(`Server listening on ${host}:${port}`);
+} catch (err) {
+  fastify.log.error(err);
+  process.exit(1);
+}
