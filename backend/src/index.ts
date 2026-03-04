@@ -48,6 +48,13 @@ const fastify = Fastify({
   logger: true
 });
 
+// DEBUG: Verificar JWT_SECRET al iniciar
+console.log('🔐 JWT_SECRET check:', {
+  hasSecret: !!process.env.JWT_SECRET,
+  secretLength: process.env.JWT_SECRET?.length,
+  secretPreview: process.env.JWT_SECRET ? process.env.JWT_SECRET.substring(0, 10) + '...' : 'NOT SET'
+});
+
 // Export for route files
 export const app = {
   fastify,
@@ -55,9 +62,31 @@ export const app = {
   logger: fastify.log,
   requireAuth: () => async (request: any, reply: any) => {
     try {
+      // DEBUG: Log del token recibido
+      const authHeader = request.headers.authorization;
+      console.log('🔍 AUTH DEBUG - Header:', {
+        hasAuthHeader: !!authHeader,
+        headerLength: authHeader?.length,
+        headerPreview: authHeader ? authHeader.substring(0, 50) + '...' : 'NONE'
+      });
+      
       await request.jwtVerify();
+      
+      // DEBUG: Log si la verificación fue exitosa
+      console.log('✅ AUTH DEBUG - Token verificado:', {
+        userId: request.user?.userId,
+        email: request.user?.email
+      });
+      
       return { user: request.user };
-    } catch (err) {
+    } catch (err: any) {
+      // DEBUG: Log detallado del error
+      console.error('❌ AUTH DEBUG - Error verificando token:', {
+        errorMessage: err.message,
+        errorCode: err.code,
+        errorStatusCode: err.statusCode
+      });
+      
       reply.code(401).send({ error: 'Unauthorized' });
       return null;
     }
@@ -269,7 +298,7 @@ async function start() {
   });
 
   // JWT setup
-  fastify.register(jwt, {
+  await fastify.register(jwt, {
     secret: process.env.JWT_SECRET || 'your-secret-key'
   });
 
