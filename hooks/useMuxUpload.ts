@@ -198,9 +198,10 @@ export function useMuxUpload(): UseMuxUploadReturn {
       console.log('Upload URL:', uploadUrl);
 
       // 🔧 FIX: Use expo-file-system uploadAsync for better progress tracking
+      // CORREGIDO: Usar el enum correcto de expo-file-system
       const uploadResult = await FileSystem.uploadAsync(uploadUrl, file.uri, {
         httpMethod: 'PUT',
-        uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
+        uploadType: FileSystem.UploadType.BINARY_CONTENT,
         headers: {
           'Content-Type': file.type || 'video/mp4',
         },

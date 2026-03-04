@@ -203,22 +203,40 @@ export function registerMuxRoutes(app: App) {
       },
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
+      // DEBUG: Log de entrada al endpoint
+      app.logger.info({
+        headers: request.headers,
+        body: request.body,
+      }, '>>> ENTERING /api/mux/create-upload endpoint');
+
       const session = await requireAuth(request, reply);
-      if (!session) return;
+      if (!session) {
+        app.logger.warn('Authentication failed for mux/create-upload');
+        return;
+      }
 
       const userId = session.user.id;
       const { corsOrigin } = request.body as { corsOrigin?: string };
 
-      app.logger.info({ userId }, 'Creating Mux upload URL');
+      app.logger.info({ userId, corsOrigin }, 'Creating Mux upload URL');
 
       try {
         if (!MUX_TOKEN_ID || !MUX_TOKEN_SECRET) {
-          app.logger.error({}, 'Mux credentials not configured');
+          app.logger.error({
+            hasTokenId: !!MUX_TOKEN_ID,
+            hasTokenSecret: !!MUX_TOKEN_SECRET,
+          }, 'Mux credentials not configured - DETAILED');
           return reply.code(500).send({ success: false, error: 'Mux is not configured' });
         }
 
         // Create base64 auth header
         const auth = Buffer.from(`${MUX_TOKEN_ID}:${MUX_TOKEN_SECRET}`).toString('base64');
+
+        app.logger.info({
+          authHeaderLength: auth.length,
+          tokenIdLength: MUX_TOKEN_ID.length,
+          tokenSecretLength: MUX_TOKEN_SECRET.length,
+        }, 'Preparing Mux API call');
 
         const muxResponse = await fetch('https://api.mux.com/video/v1/uploads', {
           method: 'POST',
@@ -235,10 +253,23 @@ export function registerMuxRoutes(app: App) {
           }),
         });
 
+        // DEBUG: Log detallado de la respuesta
+        app.logger.info({
+          status: muxResponse.status,
+          statusText: muxResponse.statusText,
+          ok: muxResponse.ok,
+          headers: Object.fromEntries(muxResponse.headers.entries()),
+        }, 'Mux API response details');
+
         if (!muxResponse.ok) {
-          const error = await muxResponse.text();
-          app.logger.error({ userId, status: muxResponse.status, error }, 'Mux API error');
-          return reply.code(500).send({ success: false, error: 'Failed to create upload' });
+          const errorText = await muxResponse.text();
+          app.logger.error({ 
+            userId, 
+            status: muxResponse.status, 
+            error: errorText,
+            tokenIdStart: MUX_TOKEN_ID.substring(0, 8),
+          }, 'Mux API error - DETAILED');
+          return reply.code(500).send({ success: false, error: 'Failed to create upload', details: errorText });
         }
 
         const data: any = await muxResponse.json();
@@ -254,8 +285,8 @@ export function registerMuxRoutes(app: App) {
           assetId: data.data.asset_id,
         };
       } catch (error) {
-        app.logger.error({ err: error, userId }, 'Failed to create Mux upload');
-        throw error;
+        app.logger.error({ err: error, userId }, 'Failed to create Mux upload - EXCEPTION');
+        return reply.code(500).send({ success: false, error: 'Internal server error', details: error instanceof Error ? error.message : 'Unknown error' });
       }
     }
   );
