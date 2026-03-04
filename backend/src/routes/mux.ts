@@ -88,6 +88,7 @@ export function registerMuxRoutes(app: App) {
         // Create base64 auth header
         const auth = Buffer.from(`${MUX_TOKEN_ID}:${MUX_TOKEN_SECRET}`).toString('base64');
 
+        // CORREGIDO: URL sin espacio al final y mp4_support cambiado a 'capped'
         const muxResponse = await fetch('https://api.mux.com/video/v1/uploads', {
           method: 'POST',
           headers: {
@@ -98,7 +99,7 @@ export function registerMuxRoutes(app: App) {
             cors_origin: corsOrigin || '*',
             new_asset_settings: {
               playback_policy: ['public'],
-              mp4_support: 'standard',
+              mp4_support: 'capped', // Cambiado de 'standard' a 'capped' para compatibilidad con assets basic
             },
           }),
         });
@@ -238,6 +239,7 @@ export function registerMuxRoutes(app: App) {
           tokenSecretLength: MUX_TOKEN_SECRET.length,
         }, 'Preparing Mux API call');
 
+        // CORREGIDO: URL sin espacio al final y mp4_support cambiado a 'capped'
         const muxResponse = await fetch('https://api.mux.com/video/v1/uploads', {
           method: 'POST',
           headers: {
@@ -248,7 +250,7 @@ export function registerMuxRoutes(app: App) {
             cors_origin: corsOrigin || '*',
             new_asset_settings: {
               playback_policy: ['public'],
-              mp4_support: 'standard',
+              mp4_support: 'capped', // Cambiado de 'standard' a 'capped' para compatibilidad con assets basic
             },
           }),
         });
