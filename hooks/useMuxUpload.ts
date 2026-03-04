@@ -123,7 +123,7 @@ export function useMuxUpload(): UseMuxUploadReturn {
         error: null,
       });
 
-      // 🔧 FIX: Get bearer token with better error handling
+      // Get bearer token with better error handling
       const token = await getBearerToken();
       console.log('Token obtained:', token ? 'YES (length: ' + token.length + ')' : 'NO');
       
@@ -197,11 +197,11 @@ export function useMuxUpload(): UseMuxUploadReturn {
       console.log('Step 2: Uploading video to Mux...');
       console.log('Upload URL:', uploadUrl);
 
-      // 🔧 FIX: Use expo-file-system uploadAsync for better progress tracking
-      // CORREGIDO: Usar el enum correcto de expo-file-system
+      // Use expo-file-system uploadAsync for better progress tracking
+      // CORREGIDO: Usar valor numérico 0 (BINARY_CONTENT) en lugar de la constante
       const uploadResult = await FileSystem.uploadAsync(uploadUrl, file.uri, {
         httpMethod: 'PUT',
-        uploadType: FileSystem.UploadType.BINARY_CONTENT,
+        uploadType: 0, // 0 = BINARY_CONTENT
         headers: {
           'Content-Type': file.type || 'video/mp4',
         },
