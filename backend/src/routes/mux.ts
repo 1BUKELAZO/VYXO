@@ -12,6 +12,16 @@ export function registerMuxRoutes(app: App) {
   const MUX_TOKEN_SECRET = process.env.MUX_TOKEN_SECRET;
   const MUX_WEBHOOK_SECRET = process.env.MUX_WEBHOOK_SECRET;
 
+  // DEBUG: Verificar si las variables llegan correctamente
+  app.logger.info({
+    hasTokenId: !!MUX_TOKEN_ID,
+    hasTokenSecret: !!MUX_TOKEN_SECRET,
+    hasWebhookSecret: !!MUX_WEBHOOK_SECRET,
+    tokenIdLength: MUX_TOKEN_ID?.length || 0,
+    tokenSecretLength: MUX_TOKEN_SECRET?.length || 0,
+    webhookSecretLength: MUX_WEBHOOK_SECRET?.length || 0,
+  }, 'Mux environment variables check');
+
   if (!MUX_TOKEN_ID || !MUX_TOKEN_SECRET || !MUX_WEBHOOK_SECRET) {
     app.logger.warn('Mux environment variables not configured');
   }
@@ -68,10 +78,16 @@ export function registerMuxRoutes(app: App) {
           return reply.code(500).send({ success: false, error: 'Mux is not configured' });
         }
 
+        // DEBUG: Log de las credenciales (solo longitud, no valores)
+        app.logger.info({
+          tokenIdLength: MUX_TOKEN_ID.length,
+          tokenSecretLength: MUX_TOKEN_SECRET.length,
+          tokenIdStart: MUX_TOKEN_ID.substring(0, 8) + '...',
+        }, 'Mux credentials check before API call');
+
         // Create base64 auth header
         const auth = Buffer.from(`${MUX_TOKEN_ID}:${MUX_TOKEN_SECRET}`).toString('base64');
 
-        // URL SIN ESPACIO AL FINAL
         const muxResponse = await fetch('https://api.mux.com/video/v1/uploads', {
           method: 'POST',
           headers: {
@@ -87,9 +103,16 @@ export function registerMuxRoutes(app: App) {
           }),
         });
 
+        // DEBUG: Log de la respuesta de Mux
+        app.logger.info({
+          status: muxResponse.status,
+          statusText: muxResponse.statusText,
+          ok: muxResponse.ok,
+        }, 'Mux API response status');
+
         if (!muxResponse.ok) {
-          const error = await muxResponse.text();
-          app.logger.error({ userId, status: muxResponse.status, error }, 'Mux API error');
+          const errorText = await muxResponse.text();
+          app.logger.error({ userId, status: muxResponse.status, error: errorText }, 'Mux API error');
           return reply.code(500).send({ success: false, error: 'Failed to create upload' });
         }
 
@@ -108,8 +131,8 @@ export function registerMuxRoutes(app: App) {
           .insert(schema.videos)
           .values({
             userId,
-            videoUrl: '', // Will be updated when Mux processes
-            thumbnailUrl: '', // Will be updated when Mux processes
+            videoUrl: '',
+            thumbnailUrl: '',
             caption: caption || null,
             soundId: soundId || null,
             muxUploadId: uploadId,
@@ -197,7 +220,6 @@ export function registerMuxRoutes(app: App) {
         // Create base64 auth header
         const auth = Buffer.from(`${MUX_TOKEN_ID}:${MUX_TOKEN_SECRET}`).toString('base64');
 
-        // URL SIN ESPACIO AL FINAL
         const muxResponse = await fetch('https://api.mux.com/video/v1/uploads', {
           method: 'POST',
           headers: {
@@ -289,7 +311,6 @@ export function registerMuxRoutes(app: App) {
 
         // Handle different event types
         if (type === 'video.upload.asset_created') {
-          // Update video with mux_asset_id
           const uploadId = data.upload_id;
           const assetId = data.id;
 
@@ -307,7 +328,6 @@ export function registerMuxRoutes(app: App) {
             app.logger.info({ uploadId, assetId }, 'Video asset created');
           }
         } else if (type === 'video.asset.ready') {
-          // Video is ready for playback
           const assetId = data.id;
           const playbackId = data.playback_ids?.[0]?.id;
           const duration = data.duration;
@@ -315,7 +335,6 @@ export function registerMuxRoutes(app: App) {
           const maxResolution = data.max_stored_resolution;
 
           if (playbackId) {
-            // URLs SIN ESPACIOS DESPUÉS DEL DOMINIO
             const masterPlaylistUrl = `https://stream.mux.com/${playbackId}.m3u8`;
             const muxThumbnailUrl = `https://image.mux.com/${playbackId}/thumbnail.jpg?width=640&height=1138&fit_mode=smartcrop&time=1`;
             const gifUrl = `https://image.mux.com/${playbackId}/animated.gif?width=320&height=569&fps=15`;
@@ -334,14 +353,12 @@ export function registerMuxRoutes(app: App) {
               })
               .where(eq(schema.videos.muxAssetId, assetId));
 
-            // Fetch the video to get userId for notification
             const [video] = await app.db
               .select()
               .from(schema.videos)
               .where(eq(schema.videos.muxAssetId, assetId));
 
             if (video) {
-              // Create notification for video owner
               await app.db.insert(schema.notifications).values({
                 userId: video.userId,
                 type: 'video_published',
@@ -356,7 +373,6 @@ export function registerMuxRoutes(app: App) {
             }
           }
         } else if (type === 'video.asset.errored') {
-          // Video processing failed
           const assetId = data.id;
 
           await app.db
@@ -431,8 +447,7 @@ export function registerMuxRoutes(app: App) {
           return reply.code(400).send({ success: false, error: 'Video not ready yet' });
         }
 
-        // URL SIN ESPACIO DESPUÉS DEL DOMINIO
-       const playbackUrl = `https://stream.mux.com/${video.muxPlaybackId}.m3u8`;
+        const playbackUrl = `https://stream.mux.com/${video.muxPlaybackId}.m3u8`;
 
         app.logger.info({ videoId, status: video.status }, 'Playback information retrieved');
 
