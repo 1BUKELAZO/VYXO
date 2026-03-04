@@ -76,26 +76,75 @@ async function createTables() {
   console.log('🔄 Creando tablas necesarias...');
   
   try {
-    // 1. Crear tabla user (primero porque otras tablas dependen de ella)
+    // 1. Crear tabla user (PRIMERA - sin dependencias)
+    // CORREGIDO: email_verified es boolean, no timestamp
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS "user" (
         "id" text PRIMARY KEY,
-        "name" text,
+        "name" text NOT NULL,
         "email" text NOT NULL UNIQUE,
-        "email_verified" timestamp,
+        "email_verified" boolean DEFAULT false NOT NULL,
         "image" text,
         "password" text,
-        "role" text DEFAULT 'user',
-        "is_banned" boolean DEFAULT false,
-        "banned_at" timestamp,
-        "banned_by" text,
-        "created_at" timestamp DEFAULT now(),
-        "updated_at" timestamp DEFAULT now()
+        "role" text DEFAULT 'user' NOT NULL,
+        "is_banned" boolean DEFAULT false NOT NULL,
+        "banned_at" timestamp with time zone,
+        "banned_by" text REFERENCES "user"("id") ON DELETE set null,
+        "created_at" timestamp DEFAULT now() NOT NULL,
+        "updated_at" timestamp DEFAULT now() NOT NULL
       )
     `);
     console.log('✅ Tabla user creada');
 
-    // 2. Crear tabla refresh_token
+    // 2. Crear tabla session
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "session" (
+        "id" text PRIMARY KEY,
+        "expires_at" timestamp NOT NULL,
+        "token" text NOT NULL UNIQUE,
+        "created_at" timestamp DEFAULT now() NOT NULL,
+        "updated_at" timestamp NOT NULL,
+        "ip_address" text,
+        "user_agent" text,
+        "user_id" text NOT NULL REFERENCES "user"("id") ON DELETE cascade
+      )
+    `);
+    console.log('✅ Tabla session creada');
+
+    // 3. Crear tabla account
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "account" (
+        "id" text PRIMARY KEY,
+        "account_id" text NOT NULL,
+        "provider_id" text NOT NULL,
+        "user_id" text NOT NULL REFERENCES "user"("id") ON DELETE cascade,
+        "access_token" text,
+        "refresh_token" text,
+        "id_token" text,
+        "access_token_expires_at" timestamp,
+        "refresh_token_expires_at" timestamp,
+        "scope" text,
+        "password" text,
+        "created_at" timestamp DEFAULT now() NOT NULL,
+        "updated_at" timestamp NOT NULL
+      )
+    `);
+    console.log('✅ Tabla account creada');
+
+    // 4. Crear tabla verification
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "verification" (
+        "id" text PRIMARY KEY,
+        "identifier" text NOT NULL,
+        "value" text NOT NULL,
+        "expires_at" timestamp NOT NULL,
+        "created_at" timestamp DEFAULT now() NOT NULL,
+        "updated_at" timestamp DEFAULT now() NOT NULL
+      )
+    `);
+    console.log('✅ Tabla verification creada');
+
+    // 5. Crear tabla refresh_token
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS "refresh_token" (
         "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -108,7 +157,7 @@ async function createTables() {
     `);
     console.log('✅ Tabla refresh_token creada');
 
-    // 3. Crear tabla videos
+    // 6. Crear tabla videos
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS "videos" (
         "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -125,13 +174,12 @@ async function createTables() {
         "allow_comments" boolean DEFAULT true,
         "allow_duets" boolean DEFAULT true,
         "allow_stitches" boolean DEFAULT true,
-        "created_at" timestamp DEFAULT now(),
-        "updated_at" timestamp DEFAULT now()
+        "created_at" timestamp with time zone DEFAULT now() NOT NULL
       )
     `);
     console.log('✅ Tabla videos creada');
 
-    // 4. Crear tabla gifts
+    // 7. Crear tabla gifts
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS "gifts" (
         "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -140,71 +188,24 @@ async function createTables() {
         "price_coins" integer NOT NULL,
         "value_coins" integer NOT NULL,
         "animation_url" text,
-        "created_at" timestamp DEFAULT now()
+        "created_at" timestamp with time zone DEFAULT now() NOT NULL
       )
     `);
     console.log('✅ Tabla gifts creada');
 
-    // 5. Crear tabla coin_packages
+    // 8. Crear tabla coin_packages (CORREGIDO - agregada stripe_price_id)
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS "coin_packages" (
         "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
         "name" text NOT NULL,
         "coins" integer NOT NULL,
-        "price_usd" text NOT NULL,
-        "is_active" boolean DEFAULT true,
-        "created_at" timestamp DEFAULT now()
+        "price_usd" numeric(10, 2) NOT NULL,
+        "stripe_price_id" text,
+        "is_active" boolean DEFAULT true NOT NULL,
+        "created_at" timestamp with time zone DEFAULT now() NOT NULL
       )
     `);
     console.log('✅ Tabla coin_packages creada');
-
-    // 6. Crear tabla accounts (para better-auth)
-    await db.execute(sql`
-      CREATE TABLE IF NOT EXISTS "account" (
-        "id" text PRIMARY KEY,
-        "account_id" text NOT NULL,
-        "provider_id" text NOT NULL,
-        "user_id" text NOT NULL REFERENCES "user"("id") ON DELETE cascade,
-        "access_token" text,
-        "refresh_token" text,
-        "id_token" text,
-        "access_token_expires_at" timestamp,
-        "refresh_token_expires_at" timestamp,
-        "scope" text,
-        "password" text,
-        "created_at" timestamp DEFAULT now(),
-        "updated_at" timestamp DEFAULT now()
-      )
-    `);
-    console.log('✅ Tabla account creada');
-
-    // 7. Crear tabla sessions (para better-auth)
-    await db.execute(sql`
-      CREATE TABLE IF NOT EXISTS "session" (
-        "id" text PRIMARY KEY,
-        "expires_at" timestamp NOT NULL,
-        "token" text NOT NULL UNIQUE,
-        "created_at" timestamp DEFAULT now(),
-        "updated_at" timestamp DEFAULT now(),
-        "ip_address" text,
-        "user_agent" text,
-        "user_id" text NOT NULL REFERENCES "user"("id") ON DELETE cascade
-      )
-    `);
-    console.log('✅ Tabla session creada');
-
-    // 8. Crear tabla verifications (para better-auth)
-    await db.execute(sql`
-      CREATE TABLE IF NOT EXISTS "verification" (
-        "id" text PRIMARY KEY,
-        "identifier" text NOT NULL,
-        "value" text NOT NULL,
-        "expires_at" timestamp NOT NULL,
-        "created_at" timestamp DEFAULT now(),
-        "updated_at" timestamp DEFAULT now()
-      )
-    `);
-    console.log('✅ Tabla verification creada');
 
     console.log('✅ Todas las tablas creadas exitosamente');
   } catch (error) {
