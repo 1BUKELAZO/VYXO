@@ -28,6 +28,15 @@ export function registerVideoRoutes(app: App) {
       if (!session) return;
 
       const userId = session.user.id;
+      
+      // ✅ DEBUG: Verificar que userId existe
+      app.logger.info({ userId, hasUserId: !!userId }, 'Video upload - User ID check');
+      
+      if (!userId) {
+        app.logger.error({ session }, 'No userId in session');
+        return reply.code(401).send({ success: false, error: 'Authentication required' });
+      }
+
       app.logger.info({ userId }, 'Starting video upload/create');
 
       try {
@@ -71,7 +80,13 @@ export function registerVideoRoutes(app: App) {
           isStitch = body.isStitch || false;
           duetLayout = body.duetLayout || 'side';
 
-          app.logger.info({ userId, muxUploadId, muxAssetId, isJson: true }, 'JSON body received');
+          app.logger.info({ 
+            userId, 
+            muxUploadId, 
+            muxAssetId, 
+            caption,
+            isJson: true 
+          }, 'JSON body received');
         } else {
           // Manejar multipart (legacy workflow)
           const parts = request.parts();
@@ -167,30 +182,39 @@ export function registerVideoRoutes(app: App) {
               .where(eq(schema.sounds.id, soundId));
           }
 
+          // ✅ CORREGIDO: Asegurar que userId se pase correctamente
+          const videoData = {
+            userId: userId, // ← EXPLÍCITO
+            videoUrl: '',
+            thumbnailUrl: '',
+            caption: caption || null,
+            duration: duration || null,
+            allowComments: allowComments,
+            allowDuets: allowDuets,
+            allowStitches: allowStitches,
+            muxUploadId: muxUploadId,
+            muxAssetId: muxAssetId,
+            soundId: soundId || null,
+            duetWithId: duetWithId || null,
+            isDuet: isDuet,
+            isStitch: isStitch,
+            duetLayout: (isDuet || isStitch) ? duetLayout : null,
+            status: 'uploading',
+            likesCount: 0,
+            commentsCount: 0,
+            sharesCount: 0,
+            viewsCount: 0,
+          };
+
+          app.logger.info({ 
+            userId, 
+            videoData,
+            videoDataUserId: videoData.userId 
+          }, 'About to insert video record');
+
           const [video] = await app.db
             .insert(schema.videos)
-            .values({
-              userId,
-              videoUrl: '',
-              thumbnailUrl: '',
-              caption: caption || null,
-              duration: duration || null,
-              allowComments,
-              allowDuets: allowDuets,
-              allowStitches: allowStitches,
-              muxUploadId,
-              muxAssetId,
-              soundId: soundId || null,
-              duetWithId: duetWithId || null,
-              isDuet,
-              isStitch,
-              duetLayout: isDuet || isStitch ? duetLayout : null,
-              status: 'uploading',
-              likesCount: 0,
-              commentsCount: 0,
-              sharesCount: 0,
-              viewsCount: 0,
-            })
+            .values(videoData)
             .returning({ id: schema.videos.id });
 
           if (duetWithId && (isDuet || isStitch)) {
@@ -255,22 +279,23 @@ export function registerVideoRoutes(app: App) {
             .where(eq(schema.sounds.id, soundId));
         }
 
+        // ✅ CORREGIDO: Asegurar que userId se pase correctamente en legacy también
         const [video] = await app.db
           .insert(schema.videos)
           .values({
-            userId,
+            userId: userId, // ← EXPLÍCITO
             videoUrl: uploadedVideoKey,
             thumbnailUrl: uploadedThumbnailKey,
             caption: caption || null,
             duration: duration || null,
-            allowComments,
+            allowComments: allowComments,
             allowDuets: allowDuets,
             allowStitches: allowStitches,
             soundId: soundId || null,
             duetWithId: duetWithId || null,
-            isDuet,
-            isStitch,
-            duetLayout: isDuet || isStitch ? duetLayout : null,
+            isDuet: isDuet,
+            isStitch: isStitch,
+            duetLayout: (isDuet || isStitch) ? duetLayout : null,
             status: 'ready',
             likesCount: 0,
             commentsCount: 0,
