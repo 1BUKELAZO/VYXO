@@ -88,7 +88,7 @@ export function registerMuxRoutes(app: App) {
         // Create base64 auth header
         const auth = Buffer.from(`${MUX_TOKEN_ID}:${MUX_TOKEN_SECRET}`).toString('base64');
 
-        // CORREGIDO: URL sin espacio al final y mp4_support cambiado a 'none'
+        // ✅ CORREGIDO: URL sin espacio al final
         const muxResponse = await fetch('https://api.mux.com/video/v1/uploads', {
           method: 'POST',
           headers: {
@@ -99,7 +99,7 @@ export function registerMuxRoutes(app: App) {
             cors_origin: corsOrigin || '*',
             new_asset_settings: {
               playback_policy: ['public'],
-              mp4_support: 'none', // Cambiado a 'none' - valor válido para Mux
+              mp4_support: 'none',
             },
           }),
         });
@@ -239,7 +239,7 @@ export function registerMuxRoutes(app: App) {
           tokenSecretLength: MUX_TOKEN_SECRET.length,
         }, 'Preparing Mux API call');
 
-        // CORREGIDO: URL sin espacio al final y mp4_support cambiado a 'none'
+        // ✅ CORREGIDO: URL sin espacio al final
         const muxResponse = await fetch('https://api.mux.com/video/v1/uploads', {
           method: 'POST',
           headers: {
@@ -250,7 +250,7 @@ export function registerMuxRoutes(app: App) {
             cors_origin: corsOrigin || '*',
             new_asset_settings: {
               playback_policy: ['public'],
-              mp4_support: 'none', // Cambiado a 'none' - valor válido para Mux
+              mp4_support: 'none',
             },
           }),
         });
@@ -281,6 +281,7 @@ export function registerMuxRoutes(app: App) {
           'Mux upload created successfully'
         );
 
+        // ✅ CORREGIDO: Asegurar que assetId se incluye en la respuesta
         return {
           uploadUrl: data.data.url,
           uploadId: data.data.id,
@@ -368,6 +369,7 @@ export function registerMuxRoutes(app: App) {
           const maxResolution = data.max_stored_resolution;
 
           if (playbackId) {
+            // ✅ CORREGIDO: URLs sin espacios
             const masterPlaylistUrl = `https://stream.mux.com/${playbackId}.m3u8`;
             const muxThumbnailUrl = `https://image.mux.com/${playbackId}/thumbnail.jpg?width=640&height=1138&fit_mode=smartcrop&time=1`;
             const gifUrl = `https://image.mux.com/${playbackId}/animated.gif?width=320&height=569&fps=15`;
@@ -480,6 +482,7 @@ export function registerMuxRoutes(app: App) {
           return reply.code(400).send({ success: false, error: 'Video not ready yet' });
         }
 
+        // ✅ CORREGIDO: URL sin espacio
         const playbackUrl = `https://stream.mux.com/${video.muxPlaybackId}.m3u8`;
 
         app.logger.info({ videoId, status: video.status }, 'Playback information retrieved');
