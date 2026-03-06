@@ -1,7 +1,8 @@
 import { useState, useCallback, useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { BACKEND_URL, getBearerToken } from '@/utils/api';
-import * as FileSystem from 'expo-file-system';
+// ✅ CORREGIDO: Usar API legacy de expo-file-system
+import * as FileSystem from 'expo-file-system/legacy';
 
 // Upload state interface
 export interface UploadState {
