@@ -3,35 +3,24 @@ import { eq, desc, and, not, isNull, inArray, sql } from 'drizzle-orm';
 import * as schema from '../db/schema.js';
 import { user } from '../db/auth-schema.js';
 
+// Add App type import
+type App = any; // Replace with your actual App type
+
 export function registerVideoRoutes(app: App) {
   const requireAuth = app.requireAuth();
 
   /**
    * POST /api/videos/upload
-   * Upload a video with thumbnail
+   * Create a video record (for Mux workflow) or upload with files
    * Requires authentication
-   * Validates video duration (3-60 seconds) and file size (max 100MB for video, 5MB for thumbnail)
    */
   app.fastify.post(
     '/api/videos/upload',
     {
       schema: {
-        description: 'Upload a video with thumbnail',
+        description: 'Create video record or upload with files',
         tags: ['videos'],
-        consumes: ['multipart/form-data'],
-        response: {
-          200: {
-            type: 'object',
-            properties: {
-              success: { type: 'boolean' },
-              videoId: { type: 'string' },
-              videoUrl: { type: 'string' },
-              thumbnailUrl: { type: 'string' },
-              status: { type: 'string' },
-              duration: { type: 'number' },
-            },
-          },
-        },
+        consumes: ['application/json', 'multipart/form-data'],
       },
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
@@ -39,110 +28,108 @@ export function registerVideoRoutes(app: App) {
       if (!session) return;
 
       const userId = session.user.id;
-      app.logger.info({ userId }, 'Starting video upload');
+      app.logger.info({ userId }, 'Starting video upload/create');
 
       try {
-        // Process multipart form data
-        const parts = request.parts();
+        // Detectar si es JSON o multipart
+        const contentType = request.headers['content-type'] || '';
+        const isJson = contentType.includes('application/json');
 
-        let videoFile: any = null;
-        let thumbnailFile: any = null;
-        let caption: string | undefined = undefined;
-        let duration: number | undefined = undefined;
+        let muxUploadId: string | undefined;
+        let muxAssetId: string | undefined;
+        let caption: string | undefined;
+        let duration: number | undefined;
         let allowComments: boolean = true;
         let allowDuets: boolean = true;
         let allowStitches: boolean = true;
-        let muxUploadId: string | undefined = undefined;
-        let muxAssetId: string | undefined = undefined;
-        let soundId: string | undefined = undefined;
-        let duetWithId: string | undefined = undefined;
+        let visibility: string = 'public';
+        let soundId: string | undefined;
+        let duetWithId: string | undefined;
         let isDuet: boolean = false;
         let isStitch: boolean = false;
         let duetLayout: string = 'side';
+        let videoFile: any = null;
+        let thumbnailFile: any = null;
+        let hashtags: string[] = [];
+        let mentions: string[] = [];
 
-        for await (const part of parts) {
-          if (part.type === 'file') {
-            if (part.fieldname === 'video') {
-              // Validate video file type
-              const videoMimeTypes = ['video/mp4', 'video/quicktime', 'video/x-msvideo'];
-              if (!videoMimeTypes.includes(part.mimetype)) {
-                return reply.code(400).send({
-                  success: false,
-                  error: 'Invalid video format. Only MP4, MOV, and AVI are supported'
-                });
+        if (isJson) {
+          // Manejar JSON (Mux workflow)
+          const body = request.body as any;
+          muxUploadId = body.muxUploadId;
+          muxAssetId = body.muxAssetId;
+          caption = body.caption;
+          hashtags = body.hashtags || [];
+          mentions = body.mentions || [];
+          allowComments = body.allowComments !== undefined ? body.allowComments : true;
+          allowDuets = body.allowDuet !== undefined ? body.allowDuet : true;
+          allowStitches = body.allowStitch !== undefined ? body.allowStitch : true;
+          visibility = body.visibility || 'public';
+          soundId = body.soundId;
+          duetWithId = body.duetWithId;
+          isDuet = body.isDuet || false;
+          isStitch = body.isStitch || false;
+          duetLayout = body.duetLayout || 'side';
+
+          app.logger.info({ userId, muxUploadId, muxAssetId, isJson: true }, 'JSON body received');
+        } else {
+          // Manejar multipart (legacy workflow)
+          const parts = request.parts();
+
+          for await (const part of parts) {
+            if (part.type === 'file') {
+              if (part.fieldname === 'video') {
+                const videoMimeTypes = ['video/mp4', 'video/quicktime', 'video/x-msvideo'];
+                if (!videoMimeTypes.includes(part.mimetype)) {
+                  return reply.code(400).send({
+                    success: false,
+                    error: 'Invalid video format. Only MP4, MOV, and AVI are supported'
+                  });
+                }
+                videoFile = part;
+              } else if (part.fieldname === 'thumbnail') {
+                const imageMimeTypes = ['image/jpeg', 'image/png'];
+                if (!imageMimeTypes.includes(part.mimetype)) {
+                  return reply.code(400).send({
+                    success: false,
+                    error: 'Invalid thumbnail format. Only JPG and PNG are supported'
+                  });
+                }
+                thumbnailFile = part;
               }
-              videoFile = part;
-            } else if (part.fieldname === 'thumbnail') {
-              // Validate thumbnail file type
-              const imageMimeTypes = ['image/jpeg', 'image/png'];
-              if (!imageMimeTypes.includes(part.mimetype)) {
-                return reply.code(400).send({
-                  success: false,
-                  error: 'Invalid thumbnail format. Only JPG and PNG are supported'
-                });
-              }
-              thumbnailFile = part;
-            }
-          } else {
-            // Handle form fields
-            const value = (part as any).value;
-            if (part.fieldname === 'caption') {
-              caption = value;
-              if (caption && caption.length > 150) {
-                return reply.code(400).send({
-                  success: false,
-                  error: 'Caption must be 150 characters or less'
-                });
-              }
-            } else if (part.fieldname === 'duration') {
-              duration = parseFloat(value);
-            } else if (part.fieldname === 'allowComments') {
-              allowComments = value === 'true' || value === true;
-            } else if (part.fieldname === 'allowDuets') {
-              allowDuets = value === 'true' || value === true;
-            } else if (part.fieldname === 'allowStitches') {
-              allowStitches = value === 'true' || value === true;
-            } else if (part.fieldname === 'muxUploadId') {
-              muxUploadId = value;
-            } else if (part.fieldname === 'muxAssetId') {
-              muxAssetId = value;
-            } else if (part.fieldname === 'soundId') {
-              soundId = value;
-            } else if (part.fieldname === 'duetWithId') {
-              duetWithId = value;
-            } else if (part.fieldname === 'isDuet') {
-              isDuet = value === 'true' || value === true;
-            } else if (part.fieldname === 'isStitch') {
-              isStitch = value === 'true' || value === true;
-            } else if (part.fieldname === 'duetLayout') {
-              duetLayout = value === 'top-bottom' ? 'top-bottom' : 'side';
+            } else {
+              const value = (part as any).value;
+              if (part.fieldname === 'caption') caption = value;
+              else if (part.fieldname === 'duration') duration = parseFloat(value);
+              else if (part.fieldname === 'allowComments') allowComments = value === 'true' || value === true;
+              else if (part.fieldname === 'allowDuets') allowDuets = value === 'true' || value === true;
+              else if (part.fieldname === 'allowStitches') allowStitches = value === 'true' || value === true;
+              else if (part.fieldname === 'muxUploadId') muxUploadId = value;
+              else if (part.fieldname === 'muxAssetId') muxAssetId = value;
+              else if (part.fieldname === 'soundId') soundId = value;
+              else if (part.fieldname === 'duetWithId') duetWithId = value;
+              else if (part.fieldname === 'isDuet') isDuet = value === 'true' || value === true;
+              else if (part.fieldname === 'isStitch') isStitch = value === 'true' || value === true;
+              else if (part.fieldname === 'duetLayout') duetLayout = value === 'top-bottom' ? 'top-bottom' : 'side';
             }
           }
         }
 
-        // Validate required files (or Mux IDs)
-        if (!videoFile && !muxUploadId) {
+        // Validar que tengamos Mux IDs o archivos
+        if (!muxUploadId && !videoFile) {
           app.logger.warn({ userId }, 'No video file or muxUploadId provided');
           return reply.code(400).send({ success: false, error: 'Video file or muxUploadId is required' });
         }
 
-        if (!thumbnailFile && !muxAssetId) {
-          app.logger.warn({ userId }, 'No thumbnail file or muxAssetId provided');
-          return reply.code(400).send({ success: false, error: 'Thumbnail file or muxAssetId is required' });
+        // Validar caption
+        if (caption && caption.length > 150) {
+          return reply.code(400).send({
+            success: false,
+            error: 'Caption must be 150 characters or less'
+          });
         }
 
-        // Validate duration if provided
-        if (duration !== undefined) {
-          if (duration < 3 || duration > 60) {
-            app.logger.warn({ userId, duration }, 'Video duration out of range');
-            return reply.code(400).send({
-              success: false,
-              error: 'Video duration must be between 3 and 60 seconds'
-            });
-          }
-        }
-
-        // Validate duet/stitch if provided
+        // Validar duet/stitch
         if (duetWithId && (isDuet || isStitch)) {
           const [originalVideo] = await app.db
             .select()
@@ -150,16 +137,13 @@ export function registerVideoRoutes(app: App) {
             .where(eq(schema.videos.id, duetWithId));
 
           if (!originalVideo) {
-            app.logger.warn({ duetWithId }, 'Original video not found for duet/stitch');
             return reply.code(404).send({
               success: false,
               error: 'Original video not found'
             });
           }
 
-          // Check if duets or stitches are allowed
           if (isDuet && !originalVideo.allowDuets) {
-            app.logger.warn({ duetWithId, userId }, 'Duets not allowed on original video');
             return reply.code(403).send({
               success: false,
               error: 'Duets are not allowed on this video'
@@ -167,7 +151,6 @@ export function registerVideoRoutes(app: App) {
           }
 
           if (isStitch && !originalVideo.allowStitches) {
-            app.logger.warn({ duetWithId, userId }, 'Stitches not allowed on original video');
             return reply.code(403).send({
               success: false,
               error: 'Stitches are not allowed on this video'
@@ -175,14 +158,8 @@ export function registerVideoRoutes(app: App) {
           }
         }
 
-        app.logger.info(
-          { userId, hasVideo: !!videoFile, hasThumbnail: !!thumbnailFile, duration, muxUploadId, muxAssetId, isDuet, isStitch, duetWithId },
-          'Files received'
-        );
-
-        // Handle Mux workflow (no file uploads, just create record with Mux IDs)
-        if (muxUploadId && muxAssetId) {
-          // Increment sound usage count if soundId provided
+        // Mux workflow (JSON)
+        if (muxUploadId && muxAssetId && !videoFile) {
           if (soundId) {
             await app.db
               .update(schema.sounds)
@@ -194,13 +171,13 @@ export function registerVideoRoutes(app: App) {
             .insert(schema.videos)
             .values({
               userId,
-              videoUrl: '', // Will be updated by Mux webhook
-              thumbnailUrl: '', // Will be updated by Mux webhook
+              videoUrl: '',
+              thumbnailUrl: '',
               caption: caption || null,
               duration: duration || null,
               allowComments,
-              allowDuets,
-              allowStitches,
+              allowDuets: allowDuets,
+              allowStitches: allowStitches,
               muxUploadId,
               muxAssetId,
               soundId: soundId || null,
@@ -216,7 +193,6 @@ export function registerVideoRoutes(app: App) {
             })
             .returning({ id: schema.videos.id });
 
-          // Increment duets count on original video if creating a duet/stitch
           if (duetWithId && (isDuet || isStitch)) {
             await app.db
               .update(schema.videos)
@@ -225,8 +201,8 @@ export function registerVideoRoutes(app: App) {
           }
 
           app.logger.info(
-            { userId, videoId: video.id, muxUploadId, muxAssetId, soundId },
-            'Video record created with Mux IDs'
+            { userId, videoId: video.id, muxUploadId, muxAssetId },
+            'Video record created with Mux IDs (JSON)'
           );
 
           return {
@@ -239,10 +215,9 @@ export function registerVideoRoutes(app: App) {
           };
         }
 
-        // Handle traditional file upload workflow
+        // Legacy file upload workflow (multipart)
         const videoBuffer = await videoFile.toBuffer();
 
-        // Validate video file size (max 100MB)
         if (videoBuffer.length > 100 * 1024 * 1024) {
           app.logger.warn({ userId, size: videoBuffer.length }, 'Video file exceeds max size');
           return reply.code(400).send({
@@ -257,10 +232,8 @@ export function registerVideoRoutes(app: App) {
 
         app.logger.info({ userId, videoKey: uploadedVideoKey, size: videoBuffer.length }, 'Video uploaded to storage');
 
-        // Upload thumbnail to storage
         const thumbnailBuffer = await thumbnailFile.toBuffer();
 
-        // Validate thumbnail file size (max 5MB)
         if (thumbnailBuffer.length > 5 * 1024 * 1024) {
           app.logger.warn({ userId, size: thumbnailBuffer.length }, 'Thumbnail file exceeds max size');
           return reply.code(400).send({
@@ -275,7 +248,6 @@ export function registerVideoRoutes(app: App) {
 
         app.logger.info({ userId, thumbnailKey: uploadedThumbnailKey, size: thumbnailBuffer.length }, 'Thumbnail uploaded to storage');
 
-        // Increment sound usage count if soundId provided
         if (soundId) {
           await app.db
             .update(schema.sounds)
@@ -283,7 +255,6 @@ export function registerVideoRoutes(app: App) {
             .where(eq(schema.sounds.id, soundId));
         }
 
-        // Create video record in database
         const [video] = await app.db
           .insert(schema.videos)
           .values({
@@ -293,8 +264,8 @@ export function registerVideoRoutes(app: App) {
             caption: caption || null,
             duration: duration || null,
             allowComments,
-            allowDuets,
-            allowStitches,
+            allowDuets: allowDuets,
+            allowStitches: allowStitches,
             soundId: soundId || null,
             duetWithId: duetWithId || null,
             isDuet,
@@ -308,7 +279,6 @@ export function registerVideoRoutes(app: App) {
           })
           .returning({ id: schema.videos.id });
 
-        // Increment duets count on original video if creating a duet/stitch
         if (duetWithId && (isDuet || isStitch)) {
           await app.db
             .update(schema.videos)
@@ -327,7 +297,7 @@ export function registerVideoRoutes(app: App) {
           duration: duration || 0,
         };
       } catch (error) {
-        app.logger.error({ err: error, userId }, 'Failed to upload video');
+        app.logger.error({ err: error, userId }, 'Failed to upload/create video');
         throw error;
       }
     }
@@ -387,7 +357,6 @@ export function registerVideoRoutes(app: App) {
       app.logger.info({ userId, videoId }, 'Updating video metadata');
 
       try {
-        // Check if video exists and belongs to user
         const [video] = await app.db
           .select()
           .from(schema.videos)
@@ -403,7 +372,6 @@ export function registerVideoRoutes(app: App) {
           return reply.code(403).send({ success: false, error: 'You do not own this video' });
         }
 
-        // Validate caption length
         if (caption !== undefined && caption.length > 150) {
           return reply.code(400).send({
             success: false,
@@ -411,7 +379,6 @@ export function registerVideoRoutes(app: App) {
           });
         }
 
-        // Update video
         const updateData: any = {};
         if (caption !== undefined) updateData.caption = caption || null;
         if (allowComments !== undefined) updateData.allowComments = allowComments;
@@ -600,7 +567,6 @@ export function registerVideoRoutes(app: App) {
       app.logger.info('Fetching video feed - PUBLIC');
 
       try {
-        // Get ALL videos (public feed)
         const videosData = await app.db
           .select({
             id: schema.videos.id,
@@ -621,12 +587,11 @@ export function registerVideoRoutes(app: App) {
           .orderBy(desc(schema.videos.createdAt))
           .limit(50);
 
-        // Map videos (no likes check for public endpoint)
         const feed = videosData.map((video) => ({
           ...video,
           avatarUrl: video.avatarUrl || null,
           videoUrl: video.videoUrl,
-          isLiked: false, // Default to false for public endpoint
+          isLiked: false,
         }));
 
         app.logger.info({ count: feed.length }, 'Video feed fetched successfully');
@@ -666,16 +631,12 @@ export function registerVideoRoutes(app: App) {
       },
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
-      // TEMPORARY: Using a fixed user ID for public endpoint
-      // TODO: Restore authentication when JWT is fixed
       const userId = 'temp-user-id';
-      
       const { id: videoId } = request.params as { id: string };
 
       app.logger.info({ userId, videoId }, 'Liking video (public endpoint)');
 
       try {
-        // Check if video exists
         const video = await app.db.query.videos.findFirst({
           where: eq(schema.videos.id, videoId),
         });
@@ -685,8 +646,6 @@ export function registerVideoRoutes(app: App) {
           return reply.code(404).send({ success: false, error: 'Video not found' });
         }
 
-        // For public endpoint: just increment counter, don't track individual likes
-        // This avoids needing the likes table with userId foreign key
         await app.db.update(schema.videos)
           .set({ likesCount: video.likesCount + 1 })
           .where(eq(schema.videos.id, videoId));
@@ -732,16 +691,12 @@ export function registerVideoRoutes(app: App) {
       },
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
-      // TEMPORARY: Using a fixed user ID for public endpoint
-      // TODO: Restore authentication when JWT is fixed
       const userId = 'temp-user-id';
-      
       const { id: videoId } = request.params as { id: string };
 
       app.logger.info({ userId, videoId }, 'Unliking video (public endpoint)');
 
       try {
-        // Check if video exists
         const video = await app.db.query.videos.findFirst({
           where: eq(schema.videos.id, videoId),
         });
@@ -751,8 +706,6 @@ export function registerVideoRoutes(app: App) {
           return reply.code(404).send({ success: false, error: 'Video not found' });
         }
 
-        // For public endpoint: just decrement counter (don't go below 0)
-        // This avoids needing to check individual likes table
         const newLikesCount = Math.max(0, video.likesCount - 1);
         
         await app.db.update(schema.videos)
@@ -810,7 +763,6 @@ export function registerVideoRoutes(app: App) {
       app.logger.info({ userId, videoId }, 'Sharing video');
 
       try {
-        // Check if video exists
         const video = await app.db.query.videos.findFirst({
           where: eq(schema.videos.id, videoId),
         });
@@ -820,7 +772,6 @@ export function registerVideoRoutes(app: App) {
           return reply.code(404).send({ success: false, error: 'Video not found' });
         }
 
-        // Increment share count
         await app.db.update(schema.videos).set({ sharesCount: video.sharesCount + 1 }).where(eq(schema.videos.id, videoId));
 
         const updatedVideo = await app.db.query.videos.findFirst({
@@ -869,11 +820,10 @@ export function registerVideoRoutes(app: App) {
       app.logger.info({ userId }, 'Seeding sample data');
 
       try {
-        // Sample videos
         const sampleVideos = [
           {
-            videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4  ',
-            thumbnailUrl: 'https://images.unsplash.com/photo-1574158622682-e40e69881006?w=400  ',
+            videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+            thumbnailUrl: 'https://images.unsplash.com/photo-1574158622682-e40e69881006?w=400',
             caption: 'Amazing nature documentary 🌿 #nature #wildlife',
             userId,
             duration: 30,
@@ -887,8 +837,8 @@ export function registerVideoRoutes(app: App) {
             allowStitches: true,
           },
           {
-            videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4  ',
-            thumbnailUrl: 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=400  ',
+            videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4',
+            thumbnailUrl: 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=400',
             caption: 'Creative animation showcase ✨ #animation #art',
             userId,
             duration: 25,
@@ -902,8 +852,8 @@ export function registerVideoRoutes(app: App) {
             allowStitches: true,
           },
           {
-            videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4  ',
-            thumbnailUrl: 'https://images.unsplash.com/photo-1492691527719-9d1e07e534b4?w=400  ',
+            videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
+            thumbnailUrl: 'https://images.unsplash.com/photo-1492691527719-9d1e07e534b4?w=400',
             caption: 'Epic adventure compilation 🎬 #adventure #travel',
             userId,
             duration: 20,
@@ -918,13 +868,11 @@ export function registerVideoRoutes(app: App) {
           },
         ];
 
-        // Insert videos
         const insertedVideos = await app.db
           .insert(schema.videos)
           .values(sampleVideos)
           .returning();
 
-        // Sample ad campaigns
         const sampleAds = [
           {
             advertiserId: userId,
@@ -950,13 +898,11 @@ export function registerVideoRoutes(app: App) {
           },
         ];
 
-        // Insert ad campaigns
         const insertedAds = await app.db
           .insert(schema.adCampaigns)
           .values(sampleAds)
           .returning();
 
-        // Sample live streams
         const sampleStreams = [
           {
             userId,
@@ -976,7 +922,6 @@ export function registerVideoRoutes(app: App) {
           },
         ];
 
-        // Insert live streams
         const insertedStreams = await app.db
           .insert(schema.liveStreams)
           .values(sampleStreams)
@@ -1066,7 +1011,6 @@ export function registerVideoRoutes(app: App) {
       app.logger.info({ videoId }, 'Fetching video details');
 
       try {
-        // Get video with duet video author info
         const [video] = await app.db
           .select({
             id: schema.videos.id,
@@ -1101,7 +1045,6 @@ export function registerVideoRoutes(app: App) {
           return reply.code(404).send({ success: false, error: 'Video not found' });
         }
 
-        // Get duet video author info if this is a duet/stitch
         let duetWithUsername: string | null = null;
         let duetWithAvatarUrl: string | null = null;
 
