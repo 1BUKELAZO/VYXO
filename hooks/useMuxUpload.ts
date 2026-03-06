@@ -177,12 +177,13 @@ export function useMuxUpload(): UseMuxUploadReturn {
       const uploadData = await createUploadResponse.json();
       console.log('Mux upload URL created successfully:', { 
         uploadId: uploadData.uploadId, 
-        assetId: uploadData.assetId 
+        assetId: uploadData.assetId || 'NOT_YET_AVAILABLE' // ← DEBUG: Mostrar si llega o no
       });
 
       const { uploadUrl, uploadId, assetId } = uploadData;
 
-      if (!uploadUrl || !uploadId || !assetId) {
+      // ✅ CORREGIDO: Solo validar uploadUrl y uploadId (assetId es opcional inicialmente)
+      if (!uploadUrl || !uploadId) {
         console.error('Invalid response from create-upload:', uploadData);
         throw new Error('Respuesta inválida del servidor al crear la URL de subida');
       }
@@ -194,11 +195,10 @@ export function useMuxUpload(): UseMuxUploadReturn {
       });
 
       // Step 2: Upload video file directly to Mux
-      console.log('Step 2: Uploading video to Mux...');
+      console.log('Step 2: Uploadging video to Mux...');
       console.log('Upload URL:', uploadUrl);
 
       // Use expo-file-system uploadAsync for better progress tracking
-      // CORREGIDO: Usar valor numérico 0 (BINARY_CONTENT) en lugar de la constante
       const uploadResult = await FileSystem.uploadAsync(uploadUrl, file.uri, {
         httpMethod: 'PUT',
         uploadType: 0, // 0 = BINARY_CONTENT
@@ -223,6 +223,9 @@ export function useMuxUpload(): UseMuxUploadReturn {
       // Step 3: Create video record in backend
       console.log('Step 3: Creating video record in backend...');
 
+      // ✅ CORREGIDO: Usar uploadId como fallback si assetId no está disponible
+      const muxAssetId = assetId || uploadId;
+
       const createVideoResponse = await fetch(`${BACKEND_URL}/api/videos/upload`, {
         method: 'POST',
         headers: {
@@ -231,7 +234,7 @@ export function useMuxUpload(): UseMuxUploadReturn {
         },
         body: JSON.stringify({
           muxUploadId: uploadId,
-          muxAssetId: assetId,
+          muxAssetId: muxAssetId, // ← Usar fallback si assetId es null
           caption: metadata.caption,
           hashtags: metadata.hashtags,
           mentions: metadata.mentions,

@@ -88,7 +88,7 @@ export function registerMuxRoutes(app: App) {
         // Create base64 auth header
         const auth = Buffer.from(`${MUX_TOKEN_ID}:${MUX_TOKEN_SECRET}`).toString('base64');
 
-        // ✅ CORREGIDO: URL sin espacio al final
+        // CORREGIDO: URL sin espacio al final
         const muxResponse = await fetch('https://api.mux.com/video/v1/uploads', {
           method: 'POST',
           headers: {
@@ -197,7 +197,7 @@ export function registerMuxRoutes(app: App) {
             properties: {
               uploadUrl: { type: 'string' },
               uploadId: { type: 'string' },
-              assetId: { type: 'string' },
+              assetId: { type: ['string', 'null'] }, // ← CORREGIDO: Permitir null
             },
           },
         },
@@ -239,7 +239,7 @@ export function registerMuxRoutes(app: App) {
           tokenSecretLength: MUX_TOKEN_SECRET.length,
         }, 'Preparing Mux API call');
 
-        // ✅ CORREGIDO: URL sin espacio al final
+        // CORREGIDO: URL sin espacio al final
         const muxResponse = await fetch('https://api.mux.com/video/v1/uploads', {
           method: 'POST',
           headers: {
@@ -276,16 +276,27 @@ export function registerMuxRoutes(app: App) {
 
         const data: any = await muxResponse.json();
 
+        // DEBUG: Log completo de la estructura de datos
+        app.logger.info(
+          { 
+            dataKeys: Object.keys(data),
+            dataDataKeys: data.data ? Object.keys(data.data) : 'NO data.data',
+            hasAssetId: !!data.data?.asset_id,
+            assetIdValue: data.data?.asset_id || 'NOT_PRESENT',
+          }, 
+          'MUX DATA STRUCTURE DEBUG'
+        );
+
         app.logger.info(
           { userId, uploadId: data.data.id, assetId: data.data.asset_id },
           'Mux upload created successfully'
         );
 
-        // ✅ CORREGIDO: Asegurar que assetId se incluye en la respuesta
+        // ✅ CORREGIDO: Permitir assetId null (Mux no lo retorna inmediatamente)
         return {
           uploadUrl: data.data.url,
           uploadId: data.data.id,
-          assetId: data.data.asset_id,
+          assetId: data.data.asset_id || null,
         };
       } catch (error) {
         app.logger.error({ err: error, userId }, 'Failed to create Mux upload - EXCEPTION');
@@ -369,7 +380,7 @@ export function registerMuxRoutes(app: App) {
           const maxResolution = data.max_stored_resolution;
 
           if (playbackId) {
-            // ✅ CORREGIDO: URLs sin espacios
+            // CORREGIDO: URLs sin espacios
             const masterPlaylistUrl = `https://stream.mux.com/${playbackId}.m3u8`;
             const muxThumbnailUrl = `https://image.mux.com/${playbackId}/thumbnail.jpg?width=640&height=1138&fit_mode=smartcrop&time=1`;
             const gifUrl = `https://image.mux.com/${playbackId}/animated.gif?width=320&height=569&fps=15`;
@@ -482,7 +493,7 @@ export function registerMuxRoutes(app: App) {
           return reply.code(400).send({ success: false, error: 'Video not ready yet' });
         }
 
-        // ✅ CORREGIDO: URL sin espacio
+        // CORREGIDO: URL sin espacio
         const playbackUrl = `https://stream.mux.com/${video.muxPlaybackId}.m3u8`;
 
         app.logger.info({ videoId, status: video.status }, 'Playback information retrieved');
