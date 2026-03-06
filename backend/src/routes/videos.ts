@@ -27,11 +27,15 @@ export function registerVideoRoutes(app: App) {
       const session = await requireAuth(request, reply);
       if (!session) return;
 
-      const userId = session.user.id;
-      
-      // ✅ DEBUG: Verificar que userId existe
-      app.logger.info({ userId, hasUserId: !!userId }, 'Video upload - User ID check');
-      
+      // ✅ CORREGIDO: Usar userId en lugar de id
+      const userId = session.user.userId;
+
+      app.logger.info({ 
+        userId, 
+        hasUserId: !!userId,
+        sessionUser: session.user 
+      }, 'Video upload - User ID check');
+
       if (!userId) {
         app.logger.error({ session }, 'No userId in session');
         return reply.code(401).send({ success: false, error: 'Authentication required' });
@@ -371,7 +375,7 @@ export function registerVideoRoutes(app: App) {
       const session = await requireAuth(request, reply);
       if (!session) return;
 
-      const userId = session.user.id;
+      const userId = session.user.userId; // ✅ CORREGIDO: userId en lugar de id
       const { id: videoId } = request.params as { id: string };
       const { caption, allowComments, allowDuets } = request.body as {
         caption?: string;
@@ -783,7 +787,7 @@ export function registerVideoRoutes(app: App) {
       if (!session) return;
 
       const { id: videoId } = request.params as { id: string };
-      const userId = session.user.id;
+      const userId = session.user.userId; // ✅ CORREGIDO: userId en lugar de id
 
       app.logger.info({ userId, videoId }, 'Sharing video');
 
@@ -841,7 +845,7 @@ export function registerVideoRoutes(app: App) {
       const session = await requireAuth(request, reply);
       if (!session) return;
 
-      const userId = session.user.id;
+      const userId = session.user.userId; // ✅ CORREGIDO: userId en lugar de id
       app.logger.info({ userId }, 'Seeding sample data');
 
       try {
