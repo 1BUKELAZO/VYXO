@@ -186,11 +186,11 @@ export function registerVideoRoutes(app: App) {
               .where(eq(schema.sounds.id, soundId));
           }
 
-          // ✅ CORREGIDO: Asegurar que userId se pase correctamente
+          // ✅ CORREGIDO: videoUrl y thumbnailUrl como null en lugar de ''
           const videoData = {
-            userId: userId, // ← EXPLÍCITO
-            videoUrl: '',
-            thumbnailUrl: '',
+            userId: userId,
+            videoUrl: null, // ← CORREGIDO: null en lugar de ''
+            thumbnailUrl: null, // ← CORREGIDO: null en lugar de ''
             caption: caption || null,
             duration: duration || null,
             allowComments: allowComments,
@@ -287,7 +287,7 @@ export function registerVideoRoutes(app: App) {
         const [video] = await app.db
           .insert(schema.videos)
           .values({
-            userId: userId, // ← EXPLÍCITO
+            userId: userId,
             videoUrl: uploadedVideoKey,
             thumbnailUrl: uploadedThumbnailKey,
             caption: caption || null,
@@ -375,7 +375,7 @@ export function registerVideoRoutes(app: App) {
       const session = await requireAuth(request, reply);
       if (!session) return;
 
-      const userId = session.user.userId; // ✅ CORREGIDO: userId en lugar de id
+      const userId = session.user.userId;
       const { id: videoId } = request.params as { id: string };
       const { caption, allowComments, allowDuets } = request.body as {
         caption?: string;
@@ -787,7 +787,7 @@ export function registerVideoRoutes(app: App) {
       if (!session) return;
 
       const { id: videoId } = request.params as { id: string };
-      const userId = session.user.userId; // ✅ CORREGIDO: userId en lugar de id
+      const userId = session.user.userId;
 
       app.logger.info({ userId, videoId }, 'Sharing video');
 
@@ -845,7 +845,7 @@ export function registerVideoRoutes(app: App) {
       const session = await requireAuth(request, reply);
       if (!session) return;
 
-      const userId = session.user.userId; // ✅ CORREGIDO: userId en lugar de id
+      const userId = session.user.userId;
       app.logger.info({ userId }, 'Seeding sample data');
 
       try {
