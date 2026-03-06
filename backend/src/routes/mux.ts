@@ -63,7 +63,8 @@ export function registerMuxRoutes(app: App) {
       const session = await requireAuth(request, reply);
       if (!session) return;
 
-      const userId = session.user.id;
+      // ✅ CORREGIDO: Usar userId en lugar de id
+      const userId = session.user.userId;
       const { caption, soundId, corsOrigin } = request.body as {
         caption?: string;
         soundId?: string;
@@ -88,7 +89,7 @@ export function registerMuxRoutes(app: App) {
         // Create base64 auth header
         const auth = Buffer.from(`${MUX_TOKEN_ID}:${MUX_TOKEN_SECRET}`).toString('base64');
 
-        // CORREGIDO: URL sin espacio al final
+        // ✅ CORREGIDO: URL sin espacio al final
         const muxResponse = await fetch('https://api.mux.com/video/v1/uploads', {
           method: 'POST',
           headers: {
@@ -128,12 +129,13 @@ export function registerMuxRoutes(app: App) {
         );
 
         // Create video record with Mux IDs
+        // ✅ CORREGIDO: videoUrl y thumbnailUrl como null en lugar de ''
         const [video] = await app.db
           .insert(schema.videos)
           .values({
             userId,
-            videoUrl: '',
-            thumbnailUrl: '',
+            videoUrl: null,
+            thumbnailUrl: null,
             caption: caption || null,
             soundId: soundId || null,
             muxUploadId: uploadId,
@@ -145,6 +147,7 @@ export function registerMuxRoutes(app: App) {
             viewsCount: 0,
             allowComments: true,
             allowDuets: true,
+            allowStitches: true,
           })
           .returning({ id: schema.videos.id });
 
@@ -197,7 +200,7 @@ export function registerMuxRoutes(app: App) {
             properties: {
               uploadUrl: { type: 'string' },
               uploadId: { type: 'string' },
-              assetId: { type: ['string', 'null'] }, // ← CORREGIDO: Permitir null
+              assetId: { type: ['string', 'null'] },
             },
           },
         },
@@ -216,7 +219,8 @@ export function registerMuxRoutes(app: App) {
         return;
       }
 
-      const userId = session.user.id;
+      // ✅ CORREGIDO: Usar userId en lugar de id
+      const userId = session.user.userId;
       const { corsOrigin } = request.body as { corsOrigin?: string };
 
       app.logger.info({ userId, corsOrigin }, 'Creating Mux upload URL');
@@ -239,7 +243,7 @@ export function registerMuxRoutes(app: App) {
           tokenSecretLength: MUX_TOKEN_SECRET.length,
         }, 'Preparing Mux API call');
 
-        // CORREGIDO: URL sin espacio al final
+        // ✅ CORREGIDO: URL sin espacio al final
         const muxResponse = await fetch('https://api.mux.com/video/v1/uploads', {
           method: 'POST',
           headers: {
@@ -292,7 +296,6 @@ export function registerMuxRoutes(app: App) {
           'Mux upload created successfully'
         );
 
-        // ✅ CORREGIDO: Permitir assetId null (Mux no lo retorna inmediatamente)
         return {
           uploadUrl: data.data.url,
           uploadId: data.data.id,
@@ -306,12 +309,12 @@ export function registerMuxRoutes(app: App) {
   );
 
   /**
-   * POST /api/mux/webhook
-   * Webhook handler for Mux events
+   * POST /api/webhooks/mux
+   * Webhook handler for Mux events - RUTA CORREGIDA
    * Public endpoint (Mux calls this)
    */
   app.fastify.post(
-    '/api/mux/webhook',
+    '/api/webhooks/mux',
     {
       schema: {
         description: 'Mux webhook handler',
@@ -321,24 +324,40 @@ export function registerMuxRoutes(app: App) {
     async (request: FastifyRequest, reply: FastifyReply) => {
       const muxSignature = request.headers['mux-signature'] as string;
 
-      app.logger.info({ eventType: (request.body as any)?.type }, 'Mux webhook received');
+      app.logger.info({ 
+        eventType: (request.body as any)?.type,
+        headers: request.headers,
+      }, 'Mux webhook received');
 
       try {
         if (!MUX_WEBHOOK_SECRET) {
           app.logger.error({}, 'Mux webhook secret not configured');
-          return reply.code(500).send({ received: false });
+          return reply.code(500).send({ received: false, error: 'Webhook secret not configured' });
         }
 
         // Verify webhook signature
         const body = JSON.stringify(request.body);
+        
+        // Mux usa un formato específico para la firma: t=timestamp,v1=signature
+        const signatureParts = muxSignature?.split(',');
+        const signatureV1 = signatureParts?.find((part: string) => part.startsWith('v1='))?.replace('v1=', '');
+        
+        if (!signatureV1) {
+          app.logger.warn({ muxSignature }, 'Invalid webhook signature format');
+          return reply.code(401).send({ received: false, error: 'Invalid signature format' });
+        }
+
         const hash = crypto
           .createHmac('sha256', MUX_WEBHOOK_SECRET)
           .update(body)
-          .digest('base64');
+          .digest('hex');
 
-        if (muxSignature !== hash) {
-          app.logger.warn({ muxSignature, expectedHash: hash }, 'Invalid webhook signature');
-          return reply.code(401).send({ received: false });
+        if (signatureV1 !== hash) {
+          app.logger.warn({ 
+            muxSignature: signatureV1.substring(0, 20) + '...', 
+            expectedHash: hash.substring(0, 20) + '...' 
+          }, 'Invalid webhook signature');
+          return reply.code(401).send({ received: false, error: 'Invalid signature' });
         }
 
         const { type, data } = request.body as {
@@ -351,26 +370,33 @@ export function registerMuxRoutes(app: App) {
             duration?: number;
             aspect_ratio?: string;
             max_stored_resolution?: string;
+            tracks?: Array<{ type: string; status: string }>;
           };
         };
+
+        app.logger.info({ type, dataId: data.id }, 'Processing Mux webhook event');
 
         // Handle different event types
         if (type === 'video.upload.asset_created') {
           const uploadId = data.upload_id;
           const assetId = data.id;
 
-          const videos = await app.db
-            .select()
-            .from(schema.videos)
-            .where(eq(schema.videos.muxUploadId, uploadId));
-
-          if (videos.length > 0) {
-            await app.db
-              .update(schema.videos)
-              .set({ muxAssetId: assetId })
+          if (uploadId) {
+            const videos = await app.db
+              .select()
+              .from(schema.videos)
               .where(eq(schema.videos.muxUploadId, uploadId));
 
-            app.logger.info({ uploadId, assetId }, 'Video asset created');
+            if (videos.length > 0) {
+              await app.db
+                .update(schema.videos)
+                .set({ muxAssetId: assetId })
+                .where(eq(schema.videos.muxUploadId, uploadId));
+
+              app.logger.info({ uploadId, assetId }, 'Video asset created and linked');
+            } else {
+              app.logger.warn({ uploadId }, 'No video found for upload_id');
+            }
           }
         } else if (type === 'video.asset.ready') {
           const assetId = data.id;
@@ -379,8 +405,16 @@ export function registerMuxRoutes(app: App) {
           const aspectRatio = data.aspect_ratio;
           const maxResolution = data.max_stored_resolution;
 
+          app.logger.info({ 
+            assetId, 
+            playbackId, 
+            duration, 
+            aspectRatio,
+            hasPlaybackId: !!playbackId 
+          }, 'Video asset ready event received');
+
           if (playbackId) {
-            // CORREGIDO: URLs sin espacios
+            // ✅ CORREGIDO: URLs SIN espacios
             const masterPlaylistUrl = `https://stream.mux.com/${playbackId}.m3u8`;
             const muxThumbnailUrl = `https://image.mux.com/${playbackId}/thumbnail.jpg?width=640&height=1138&fit_mode=smartcrop&time=1`;
             const gifUrl = `https://image.mux.com/${playbackId}/animated.gif?width=320&height=569&fps=15`;
@@ -396,6 +430,9 @@ export function registerMuxRoutes(app: App) {
                 masterPlaylistUrl,
                 muxThumbnailUrl,
                 gifUrl,
+                // También actualizamos videoUrl para compatibilidad
+                videoUrl: masterPlaylistUrl,
+                thumbnailUrl: muxThumbnailUrl,
               })
               .where(eq(schema.videos.muxAssetId, assetId));
 
@@ -405,18 +442,25 @@ export function registerMuxRoutes(app: App) {
               .where(eq(schema.videos.muxAssetId, assetId));
 
             if (video) {
-              await app.db.insert(schema.notifications).values({
-                userId: video.userId,
-                type: 'video_published',
-                actorId: video.userId,
-                videoId: video.id,
-              });
+              // Crear notificación solo si la tabla existe
+              try {
+                await app.db.insert(schema.notifications).values({
+                  userId: video.userId,
+                  type: 'video_published',
+                  actorId: video.userId,
+                  videoId: video.id,
+                });
+              } catch (notifError) {
+                app.logger.warn({ err: notifError }, 'Failed to create notification (table may not exist)');
+              }
 
               app.logger.info(
-                { assetId, playbackId, videoId: video.id },
-                'Video ready and notification created'
+                { assetId, playbackId, videoId: video.id, masterPlaylistUrl },
+                'Video ready and updated successfully'
               );
             }
+          } else {
+            app.logger.warn({ assetId }, 'No playback_id in asset.ready event');
           }
         } else if (type === 'video.asset.errored') {
           const assetId = data.id;
@@ -427,12 +471,14 @@ export function registerMuxRoutes(app: App) {
             .where(eq(schema.videos.muxAssetId, assetId));
 
           app.logger.warn({ assetId }, 'Video asset error');
+        } else {
+          app.logger.info({ type }, 'Unhandled Mux webhook event type');
         }
 
         return { received: true };
       } catch (error) {
         app.logger.error({ err: error }, 'Failed to process webhook');
-        throw error;
+        return reply.code(500).send({ received: false, error: 'Internal server error' });
       }
     }
   );
@@ -489,14 +535,22 @@ export function registerMuxRoutes(app: App) {
         }
 
         if (!video.muxPlaybackId) {
-          app.logger.warn({ videoId }, 'Video not ready for playback');
-          return reply.code(400).send({ success: false, error: 'Video not ready yet' });
+          app.logger.warn({ videoId, status: video.status }, 'Video not ready for playback');
+          return reply.code(400).send({ 
+            success: false, 
+            error: 'Video not ready yet',
+            status: video.status 
+          });
         }
 
-        // CORREGIDO: URL sin espacio
+        // ✅ CORREGIDO: URL SIN espacio
         const playbackUrl = `https://stream.mux.com/${video.muxPlaybackId}.m3u8`;
 
-        app.logger.info({ videoId, status: video.status }, 'Playback information retrieved');
+        app.logger.info({ 
+          videoId, 
+          status: video.status,
+          playbackId: video.muxPlaybackId 
+        }, 'Playback information retrieved');
 
         return {
           playbackId: video.muxPlaybackId,
