@@ -26,6 +26,15 @@ export function registerMuxRoutes(app: App) {
     app.logger.warn('Mux environment variables not configured');
   }
 
+  // ✅ AGREGADO: GET /api/webhooks/mux - Verificar que está activo
+  app.fastify.get('/api/webhooks/mux', async (request: FastifyRequest, reply: FastifyReply) => {
+    return { 
+      status: 'Webhook endpoint active',
+      timestamp: new Date().toISOString(),
+      url: '/api/webhooks/mux'
+    };
+  });
+
   /**
    * POST /api/mux-upload
    * Create a Mux upload session and video record
@@ -414,7 +423,6 @@ export function registerMuxRoutes(app: App) {
           }, 'Video asset ready event received');
 
           if (playbackId) {
-            // ✅ CORREGIDO: URLs SIN espacios
             const masterPlaylistUrl = `https://stream.mux.com/${playbackId}.m3u8`;
             const muxThumbnailUrl = `https://image.mux.com/${playbackId}/thumbnail.jpg?width=640&height=1138&fit_mode=smartcrop&time=1`;
             const gifUrl = `https://image.mux.com/${playbackId}/animated.gif?width=320&height=569&fps=15`;
@@ -430,7 +438,6 @@ export function registerMuxRoutes(app: App) {
                 masterPlaylistUrl,
                 muxThumbnailUrl,
                 gifUrl,
-                // También actualizamos videoUrl para compatibilidad
                 videoUrl: masterPlaylistUrl,
                 thumbnailUrl: muxThumbnailUrl,
               })
@@ -442,7 +449,6 @@ export function registerMuxRoutes(app: App) {
               .where(eq(schema.videos.muxAssetId, assetId));
 
             if (video) {
-              // Crear notificación solo si la tabla existe
               try {
                 await app.db.insert(schema.notifications).values({
                   userId: video.userId,
@@ -543,7 +549,6 @@ export function registerMuxRoutes(app: App) {
           });
         }
 
-        // ✅ CORREGIDO: URL SIN espacio
         const playbackUrl = `https://stream.mux.com/${video.muxPlaybackId}.m3u8`;
 
         app.logger.info({ 
