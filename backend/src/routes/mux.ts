@@ -272,7 +272,7 @@ export function registerMuxRoutes(app: App) {
 
       const { type, data } = request.body as any;
 
-      app.logger.info({ type, dataId: data.id }, 'Processing Mux webhook event');
+      app.logger.info({ type, dataId: data.id, uploadId: data.upload_id }, 'Processing Mux webhook event');
 
       if (type === 'video.upload.asset_created') {
         const uploadId = data.upload_id;
@@ -290,34 +290,52 @@ export function registerMuxRoutes(app: App) {
         }
       } else if (type === 'video.asset.ready') {
         const assetId = data.id;
+        const uploadId = data.upload_id;
         const playbackId = data.playback_ids?.[0]?.id;
         const duration = data.duration;
         const aspectRatio = data.aspect_ratio;
         const maxResolution = data.max_stored_resolution;
 
-        app.logger.info({ assetId, playbackId, duration, aspectRatio, hasPlaybackId: !!playbackId }, 'Video asset ready event received');
+        app.logger.info({ assetId, uploadId, playbackId, duration, aspectRatio, hasPlaybackId: !!playbackId }, 'Video asset ready event received');
 
         if (playbackId) {
           const masterPlaylistUrl = `https://stream.mux.com/${playbackId}.m3u8`;
           const muxThumbnailUrl = `https://image.mux.com/${playbackId}/thumbnail.jpg?width=640&height=1138&fit_mode=smartcrop&time=1`;
           const gifUrl = `https://image.mux.com/${playbackId}/animated.gif?width=320&height=569&fps=15`;
 
-          await app.db.update(schema.videos).set({
-            status: 'ready',
-            muxPlaybackId: playbackId,
-            duration: duration ? Math.floor(duration) : null,
-            aspectRatio,
-            maxResolution,
-            masterPlaylistUrl,
-            muxThumbnailUrl,
-            gifUrl,
-            videoUrl: masterPlaylistUrl,
-            thumbnailUrl: muxThumbnailUrl,
-          }).where(eq(schema.videos.muxAssetId, assetId));
-
-          const [video] = await app.db.select().from(schema.videos).where(eq(schema.videos.muxAssetId, assetId));
+          let video = null;
+          
+          if (uploadId) {
+            const [videoByUpload] = await app.db.select().from(schema.videos).where(eq(schema.videos.muxUploadId, uploadId));
+            if (videoByUpload) {
+              video = videoByUpload;
+              app.logger.info({ videoId: video.id, foundBy: 'upload_id' }, 'Video found by upload_id');
+            }
+          }
+          
+          if (!video) {
+            const [videoByAsset] = await app.db.select().from(schema.videos).where(eq(schema.videos.muxAssetId, assetId));
+            if (videoByAsset) {
+              video = videoByAsset;
+              app.logger.info({ videoId: video.id, foundBy: 'asset_id' }, 'Video found by asset_id');
+            }
+          }
 
           if (video) {
+            await app.db.update(schema.videos).set({
+              status: 'ready',
+              muxPlaybackId: playbackId,
+              muxAssetId: assetId,
+              duration: duration ? Math.floor(duration) : null,
+              aspectRatio,
+              maxResolution,
+              masterPlaylistUrl,
+              muxThumbnailUrl,
+              gifUrl,
+              videoUrl: masterPlaylistUrl,
+              thumbnailUrl: muxThumbnailUrl,
+            }).where(eq(schema.videos.id, video.id));
+
             try {
               await app.db.insert(schema.notifications).values({
                 userId: video.userId,
@@ -330,6 +348,8 @@ export function registerMuxRoutes(app: App) {
             }
 
             app.logger.info({ assetId, playbackId, videoId: video.id, masterPlaylistUrl }, 'Video ready and updated successfully');
+          } else {
+            app.logger.warn({ assetId, uploadId }, 'No video found for asset_id or upload_id');
           }
         } else {
           app.logger.warn({ assetId }, 'No playback_id in asset.ready event');
