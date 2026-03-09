@@ -4,6 +4,7 @@ import jwt from '@fastify/jwt';
 import multipart from '@fastify/multipart';
 import websocket from '@fastify/websocket';
 import swagger from '@fastify/swagger';
+import formbody from '@fastify/formbody';
 import { sql } from "drizzle-orm";
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
@@ -284,6 +285,9 @@ async function start() {
     origin: true,
     credentials: true
   });
+
+  // ✅ AGREGADO: Plugin para parsear body JSON/form
+  await fastify.register(formbody);
 
   await fastify.register(multipart);
   await fastify.register(websocket);
