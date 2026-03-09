@@ -66,7 +66,8 @@ export function registerCreatorRoutes(app: App) {
       const session = await requireAuth(request, reply);
       if (!session) return;
 
-      const userId = session.user.id;
+      // FIX: Cambiado session.user.id por session.user.userId
+      const userId = session.user.userId;
       const { paymentMethod, paymentDetails } = request.body as {
         paymentMethod: string;
         paymentDetails: Record<string, unknown>;
@@ -165,7 +166,8 @@ export function registerCreatorRoutes(app: App) {
       const session = await requireAuth(request, reply);
       if (!session) return;
 
-      const userId = session.user.id;
+      // FIX: Cambiado session.user.id por session.user.userId
+      const userId = session.user.userId;
 
       app.logger.info({ userId }, 'Fetching creator application status');
 
@@ -235,7 +237,8 @@ export function registerCreatorRoutes(app: App) {
       const session = await requireAuth(request, reply);
       if (!session) return;
 
-      const userId = session.user.id;
+      // FIX: Cambiado session.user.id por session.user.userId
+      const userId = session.user.userId;
 
       app.logger.info({ userId }, 'Fetching creator dashboard');
 
@@ -448,7 +451,8 @@ export function registerCreatorRoutes(app: App) {
       const session = await requireAuth(request, reply);
       if (!session) return;
 
-      const userId = session.user.id;
+      // FIX: Cambiado session.user.id por session.user.userId
+      const userId = session.user.userId;
 
       app.logger.info({ userId }, 'Fetching creator earnings');
 
@@ -567,7 +571,8 @@ export function registerCreatorRoutes(app: App) {
       const session = await requireAuth(request, reply);
       if (!session) return;
 
-      const userId = session.user.id;
+      // FIX: Cambiado session.user.id por session.user.userId
+      const userId = session.user.userId;
       const { amount } = request.body as { amount: number };
 
       app.logger.info({ userId, amount }, 'Withdrawal requested');
@@ -693,7 +698,8 @@ export function registerCreatorRoutes(app: App) {
       const session = await requireAuth(request, reply);
       if (!session) return;
 
-      const userId = session.user.id;
+      // FIX: Cambiado session.user.id por session.user.userId
+      const userId = session.user.userId;
 
       app.logger.info({ userId }, 'Fetching withdrawal history');
 

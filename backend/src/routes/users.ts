@@ -339,7 +339,8 @@ export function registerUserRoutes(app: App) {
       if (!session) return;
 
       const { id: followingId } = request.params as { id: string };
-      const followerId = session.user.id;
+      // FIX: Cambiado session.user.id por session.user.userId
+      const followerId = session.user.userId;
 
       app.logger.info({ followerId, followingId }, 'Checking follow status');
 
@@ -516,7 +517,8 @@ export function registerUserRoutes(app: App) {
       if (!session) return;
 
       const { id: followingId } = request.params as { id: string };
-      const followerId = session.user.id;
+      // FIX: Cambiado session.user.id por session.user.userId
+      const followerId = session.user.userId;
 
       app.logger.info({ followerId, followingId }, 'Following user');
 
@@ -602,7 +604,8 @@ export function registerUserRoutes(app: App) {
       if (!session) return;
 
       const { id: followingId } = request.params as { id: string };
-      const followerId = session.user.id;
+      // FIX: Cambiado session.user.id por session.user.userId
+      const followerId = session.user.userId;
 
       app.logger.info({ followerId, followingId }, 'Unfollowing user');
 

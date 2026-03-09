@@ -41,13 +41,14 @@ export function registerLiveRoutes(app: App) {
       if (!session) return;
 
       const { title } = request.body as { title: string };
-      const userId = session.user.id;
+      // FIX: Cambiado session.user.id por session.user.userId
+      const userId = session.user.userId;
 
       app.logger.info({ userId, title }, 'Starting live stream');
 
       try {
         // Generate a stream URL (in production, this would use a streaming service)
-        const streamUrl = `https://live.vyxo.app/ ${userId}-${Date.now()}`;
+        const streamUrl = `https://live.vyxo.app/  ${userId}-${Date.now()}`;
 
         const stream = await app.db
           .insert(schema.liveStreams)
@@ -102,7 +103,8 @@ export function registerLiveRoutes(app: App) {
       if (!session) return;
 
       const { streamId } = request.params as { streamId: string };
-      const userId = session.user.id;
+      // FIX: Cambiado session.user.id por session.user.userId
+      const userId = session.user.userId;
 
       app.logger.info({ streamId, userId }, 'Ending live stream');
 
@@ -318,7 +320,8 @@ export function registerLiveRoutes(app: App) {
 
       const { streamId } = request.params as { streamId: string };
       const { message } = request.body as { message: string };
-      const userId = session.user.id;
+      // FIX: Cambiado session.user.id por session.user.userId
+      const userId = session.user.userId;
 
       app.logger.info({ streamId, userId }, 'Sending chat message');
 
