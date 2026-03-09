@@ -47,7 +47,7 @@ export function registerLiveRoutes(app: App) {
 
       try {
         // Generate a stream URL (in production, this would use a streaming service)
-        const streamUrl = `https://live.vyxo.app/${userId}-${Date.now()}`;
+        const streamUrl = `https://live.vyxo.app/ ${userId}-${Date.now()}`;
 
         const stream = await app.db
           .insert(schema.liveStreams)
@@ -230,7 +230,7 @@ export function registerLiveRoutes(app: App) {
                 avatarUrl: { type: 'string' },
                 title: { type: 'string' },
                 viewerCount: { type: 'number' },
-                thumbnailUrl: { type: 'string' },
+                thumbnailUrl: { type: 'string', nullable: true },
               },
             },
           },
@@ -252,7 +252,7 @@ export function registerLiveRoutes(app: App) {
             avatarUrl: user.image,
             title: schema.liveStreams.title,
             viewerCount: schema.liveStreams.viewerCount,
-            thumbnailUrl: null,
+            // REMOVIDO: thumbnailUrl: null - Drizzle no acepta null en select
           })
           .from(schema.liveStreams)
           .innerJoin(user, eq(schema.liveStreams.userId, user.id))
@@ -260,8 +260,14 @@ export function registerLiveRoutes(app: App) {
           .orderBy(desc(schema.liveStreams.viewerCount))
           .limit(50);
 
-        app.logger.info({ count: streams.length }, 'Active streams fetched successfully');
-        return streams;
+        // NUEVO: Agregar thumbnailUrl manualmente después de la query
+        const streamsWithThumbnail = streams.map(stream => ({
+          ...stream,
+          thumbnailUrl: null,
+        }));
+
+        app.logger.info({ count: streamsWithThumbnail.length }, 'Active streams fetched successfully');
+        return streamsWithThumbnail;
       } catch (error) {
         app.logger.error({ err: error }, 'Failed to fetch active streams');
         throw error;
