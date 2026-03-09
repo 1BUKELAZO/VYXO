@@ -20,7 +20,7 @@ export const sounds = pgTable(
     usageCount: integer('usage_count').notNull().default(0),
     trendingScore: real('trending_score').notNull().default(0),
     category: text('category'), // 'trending', 'viral', 'new', 'original'
-    createdBy: text('created_by').references(() => user.id, { onDelete: 'set null' }),
+    createdBy: uuid('created_by').references(() => user.id, { onDelete: 'set null' }), // ✅ FIX: uuid en lugar de text
     isOriginal: boolean('is_original').notNull().default(false),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -37,7 +37,7 @@ export const videos = pgTable(
   'videos',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }), // ✅ FIX: uuid en lugar de text
     videoUrl: text('video_url').notNull(),
     thumbnailUrl: text('thumbnail_url'),
     caption: text('caption'),
@@ -93,7 +93,7 @@ export const videoViews = pgTable(
   {
     id: uuid('id').primaryKey().defaultRandom(),
     videoId: uuid('video_id').notNull().references(() => videos.id, { onDelete: 'cascade' }),
-    userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }), // ✅ FIX: uuid en lugar de text
     viewedAt: timestamp('viewed_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
@@ -111,7 +111,7 @@ export const likes = pgTable(
   'likes',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }), // ✅ FIX: uuid en lugar de text
     videoId: uuid('video_id').notNull().references(() => videos.id, { onDelete: 'cascade' }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -128,8 +128,8 @@ export const follows = pgTable(
   'follows',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    followerId: text('follower_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
-    followingId: text('following_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+    followerId: uuid('follower_id').notNull().references(() => user.id, { onDelete: 'cascade' }), // ✅ FIX: uuid en lugar de text
+    followingId: uuid('following_id').notNull().references(() => user.id, { onDelete: 'cascade' }), // ✅ FIX: uuid en lugar de text
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
@@ -212,7 +212,7 @@ export const comments = pgTable(
   {
     id: uuid('id').primaryKey().defaultRandom(),
     videoId: uuid('video_id').notNull().references(() => videos.id, { onDelete: 'cascade' }),
-    userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }), // ✅ FIX: uuid en lugar de text
     parentCommentId: uuid('parent_comment_id').references(() => comments.id, { onDelete: 'cascade' }),
     content: text('content').notNull(),
     likesCount: integer('likes_count').notNull().default(0),
@@ -226,7 +226,7 @@ export const commentLikes = pgTable(
   {
     id: uuid('id').primaryKey().defaultRandom(),
     commentId: uuid('comment_id').notNull().references(() => comments.id, { onDelete: 'cascade' }),
-    userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }), // ✅ FIX: uuid en lugar de text
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [uniqueIndex('unique_user_comment_like').on(table.commentId, table.userId)]
@@ -268,7 +268,7 @@ export const userFollowedHashtags = pgTable(
   'user_followed_hashtags',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }), // ✅ FIX: uuid en lugar de text
     hashtagId: uuid('hashtag_id').notNull().references(() => hashtags.id, { onDelete: 'cascade' }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -284,8 +284,8 @@ export const conversations = pgTable(
   'conversations',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    participant1: text('participant_1').notNull().references(() => user.id, { onDelete: 'cascade' }),
-    participant2: text('participant_2').notNull().references(() => user.id, { onDelete: 'cascade' }),
+    participant1: uuid('participant_1').notNull().references(() => user.id, { onDelete: 'cascade' }), // ✅ FIX: uuid en lugar de text
+    participant2: uuid('participant_2').notNull().references(() => user.id, { onDelete: 'cascade' }), // ✅ FIX: uuid en lugar de text
     lastMessageAt: timestamp('last_message_at', { withTimezone: true }).notNull().defaultNow(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -301,7 +301,7 @@ export const messages = pgTable(
   {
     id: uuid('id').primaryKey().defaultRandom(),
     conversationId: uuid('conversation_id').notNull().references(() => conversations.id, { onDelete: 'cascade' }),
-    senderId: text('sender_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+    senderId: uuid('sender_id').notNull().references(() => user.id, { onDelete: 'cascade' }), // ✅ FIX: uuid en lugar de text
     content: text('content').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     readAt: timestamp('read_at', { withTimezone: true }),
@@ -317,9 +317,9 @@ export const notifications = pgTable(
   'notifications',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }), // ✅ FIX: uuid en lugar de text
     type: text('type').notNull(), // 'like', 'comment', 'follow', 'message'
-    actorId: text('actor_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+    actorId: uuid('actor_id').notNull().references(() => user.id, { onDelete: 'cascade' }), // ✅ FIX: uuid en lugar de text
     videoId: uuid('video_id').references(() => videos.id, { onDelete: 'cascade' }),
     commentId: uuid('comment_id').references(() => comments.id, { onDelete: 'cascade' }),
     isRead: boolean('is_read').notNull().default(false),
@@ -327,12 +327,12 @@ export const notifications = pgTable(
   }
 );
 
-// Live streams table
+// Live streams table - CORREGIDO
 export const liveStreams = pgTable(
   'live_streams',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }), // ✅ FIX: uuid en lugar de text
     title: text('title').notNull(),
     streamUrl: text('stream_url').notNull(),
     viewerCount: integer('viewer_count').notNull().default(0),
@@ -342,13 +342,13 @@ export const liveStreams = pgTable(
   }
 );
 
-// Live chat messages table
+// Live chat messages table - CORREGIDO
 export const liveChatMessages = pgTable(
   'live_chat_messages',
   {
     id: uuid('id').primaryKey().defaultRandom(),
     streamId: uuid('stream_id').notNull().references(() => liveStreams.id, { onDelete: 'cascade' }),
-    userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }), // ✅ FIX: uuid en lugar de text
     message: text('message').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   }
@@ -479,8 +479,8 @@ export const reports = pgTable(
   'reports',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    reporterId: text('reporter_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
-    targetId: text('target_id').notNull(),
+    reporterId: uuid('reporter_id').notNull().references(() => user.id, { onDelete: 'cascade' }), // ✅ FIX: uuid en lugar de text
+    targetId: uuid('target_id').notNull(), // ✅ FIX: uuid en lugar de text
     targetType: text('target_type').notNull(), // 'video', 'user', 'comment'
     reason: text('reason').notNull(),
     description: text('description'),
@@ -501,8 +501,8 @@ export const blocks = pgTable(
   'blocks',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    blockerId: text('blocker_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
-    blockedId: text('blocked_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+    blockerId: uuid('blocker_id').notNull().references(() => user.id, { onDelete: 'cascade' }), // ✅ FIX: uuid en lugar de text
+    blockedId: uuid('blocked_id').notNull().references(() => user.id, { onDelete: 'cascade' }), // ✅ FIX: uuid en lugar de text
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
@@ -537,7 +537,7 @@ export const creatorApplications = pgTable(
   'creator_applications',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }), // ✅ FIX: uuid en lugar de text
     status: text('status').notNull().default('pending'), // 'pending', 'approved', 'rejected'
     appliedAt: timestamp('applied_at', { withTimezone: true }).notNull().defaultNow(),
     approvedAt: timestamp('approved_at', { withTimezone: true }),
@@ -553,7 +553,7 @@ export const creatorEarnings = pgTable(
   'creator_earnings',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }), // ✅ FIX: uuid en lugar de text
     videoId: uuid('video_id').references(() => videos.id, { onDelete: 'set null' }),
     amount: numeric('amount', { precision: 10, scale: 2 }).notNull(),
     source: text('source').notNull(), // 'views', 'gifts', 'tips'
@@ -570,7 +570,7 @@ export const creatorWithdrawals = pgTable(
   'creator_withdrawals',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }), // ✅ FIX: uuid en lugar de text
     amount: numeric('amount', { precision: 10, scale: 2 }).notNull(),
     status: text('status').notNull().default('pending'), // 'pending', 'processing', 'completed', 'failed'
     paymentMethod: text('payment_method').notNull(),
@@ -629,7 +629,7 @@ export const gifts = pgTable(
 export const userCoins = pgTable(
   'user_coins',
   {
-    userId: text('user_id').primaryKey().references(() => user.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id').primaryKey().references(() => user.id, { onDelete: 'cascade' }), // ✅ FIX: uuid en lugar de text
     balance: integer('balance').notNull().default(0),
     totalSpent: integer('total_spent').notNull().default(0),
     totalEarned: integer('total_earned').notNull().default(0),
@@ -643,8 +643,8 @@ export const giftTransactions = pgTable(
   'gift_transactions',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    senderId: text('sender_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
-    recipientId: text('recipient_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+    senderId: uuid('sender_id').notNull().references(() => user.id, { onDelete: 'cascade' }), // ✅ FIX: uuid en lugar de text
+    recipientId: uuid('recipient_id').notNull().references(() => user.id, { onDelete: 'cascade' }), // ✅ FIX: uuid en lugar de text
     giftId: uuid('gift_id').notNull().references(() => gifts.id, { onDelete: 'restrict' }),
     videoId: uuid('video_id').references(() => videos.id, { onDelete: 'set null' }),
     amountCoins: integer('amount_coins').notNull(),
@@ -677,7 +677,7 @@ export const stripeTransactions = pgTable(
   'stripe_transactions',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }), // ✅ FIX: uuid en lugar de text
     stripeSessionId: text('stripe_session_id').notNull().unique(),
     stripePaymentIntentId: text('stripe_payment_intent_id'),
     packageId: uuid('package_id').notNull().references(() => coinPackages.id, { onDelete: 'restrict' }),
@@ -743,7 +743,7 @@ export const subscriptionTiers = pgTable(
   'subscription_tiers',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    creatorId: text('creator_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+    creatorId: uuid('creator_id').notNull().references(() => user.id, { onDelete: 'cascade' }), // ✅ FIX: uuid en lugar de text
     name: text('name').notNull(),
     priceMonthly: integer('price_monthly').notNull(),
     benefits: text('benefits').array().notNull(),
@@ -761,8 +761,8 @@ export const userSubscriptions = pgTable(
   'user_subscriptions',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    subscriberId: text('subscriber_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
-    creatorId: text('creator_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+    subscriberId: uuid('subscriber_id').notNull().references(() => user.id, { onDelete: 'cascade' }), // ✅ FIX: uuid en lugar de text
+    creatorId: uuid('creator_id').notNull().references(() => user.id, { onDelete: 'cascade' }), // ✅ FIX: uuid en lugar de text
     tierId: uuid('tier_id').notNull().references(() => subscriptionTiers.id, { onDelete: 'restrict' }),
     stripeSubscriptionId: text('stripe_subscription_id').notNull().unique(),
     stripeCustomerId: text('stripe_customer_id').notNull(),
@@ -837,7 +837,7 @@ export const adCampaigns = pgTable(
   'ad_campaigns',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    advertiserId: text('advertiser_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+    advertiserId: uuid('advertiser_id').notNull().references(() => user.id, { onDelete: 'cascade' }), // ✅ FIX: uuid en lugar de text
     name: text('name').notNull(),
     budget: numeric('budget', { precision: 10, scale: 2 }).notNull(),
     spent: numeric('spent', { precision: 10, scale: 2 }).notNull().default('0'),
@@ -860,7 +860,7 @@ export const adImpressions = pgTable(
   {
     id: uuid('id').primaryKey().defaultRandom(),
     campaignId: uuid('campaign_id').notNull().references(() => adCampaigns.id, { onDelete: 'cascade' }),
-    userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }), // ✅ FIX: uuid en lugar de text
     videoId: uuid('video_id').references(() => videos.id, { onDelete: 'set null' }),
     impressionAt: timestamp('impression_at', { withTimezone: true }).notNull().defaultNow(),
     clicked: boolean('clicked').notNull().default(false),
@@ -901,7 +901,7 @@ export const adImpressionsRelations = relations(adImpressions, ({ one }) => ({
 export const analyticsEvents = pgTable('analytics_events', {
   id: uuid('id').primaryKey().defaultRandom(),
   videoId: uuid('video_id').notNull().references(() => videos.id, { onDelete: 'cascade' }),
-  userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }), // ✅ FIX: uuid en lugar de text
   eventType: text('event_type').notNull(), // 'view', 'like', 'comment', 'share', 'watch_time'
   eventData: jsonb('event_data'), // stores watch_time_seconds, traffic_source, etc.
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -941,5 +941,29 @@ export const videoRetentionRelations = relations(videoRetention, ({ one }) => ({
   video: one(videos, {
     fields: [videoRetention.videoId],
     references: [videos.id],
+  }),
+}));
+
+// Refresh tokens table - NUEVA TABLA
+export const refreshTokens = pgTable(
+  'refresh_tokens',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+    token: text('token').notNull().unique(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('refresh_tokens_user_id_idx').on(table.userId),
+    index('refresh_tokens_token_idx').on(table.token),
+  ]
+);
+
+// Relations for refresh tokens
+export const refreshTokensRelations = relations(refreshTokens, ({ one }) => ({
+  user: one(user, {
+    fields: [refreshTokens.userId],
+    references: [user.id],
   }),
 }));

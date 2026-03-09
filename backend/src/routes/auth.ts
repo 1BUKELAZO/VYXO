@@ -1,278 +1,223 @@
 import type { App } from '../index.js';
 import type { FastifyRequest, FastifyReply } from 'fastify';
-import { user, refreshToken } from '../db/auth-schema.js';
-import { eq, and, isNull, gt } from 'drizzle-orm';
-import bcrypt from 'bcrypt';
-import { isValidEmail, isValidPassword, sanitizeString, isValidLength } from '../utils/validation.js';
-import crypto from 'crypto';
+import { eq, and, desc, sum, count, sql } from 'drizzle-orm';
+import * as schema from '../db/schema.js';
+import { user } from '../db/auth-schema.js';
 
-// ============================================
-// JWT UTILITIES (INLINE para evitar problemas de build)
-// ============================================
-
-// CORREGIDO: Usar JWT_SECRET en lugar de AUTH_SECRET para consistencia
-const JWT_SECRET = process.env.JWT_SECRET || 'vyxo-super-secret-key-2026-secure-jwt-token';
-const ACCESS_TOKEN_EXPIRES_IN = '15m';
-const REFRESH_TOKEN_EXPIRES_IN = '7d';
-
-interface JWTPayload {
-  userId: string;
-  email: string;
-  role: string;
-  type: 'access' | 'refresh';
-  iat: number;
-  exp: number;
+// Utility function to convert numeric to number
+function numericToNumber(value: any): number {
+  if (value === null || value === undefined) return 0;
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string') return parseFloat(value);
+  return 0;
 }
 
-// ============================================
-// AUTHENTICATED REQUEST INTERFACE
-// ============================================
-
-export interface AuthenticatedRequest extends FastifyRequest {
-  user: {
-    userId: string;
-    email: string;
-    role: string;
-  };
-}
-
-function base64UrlEncode(str: string): string {
-  return Buffer.from(str).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-}
-
-function base64UrlDecode(str: string): string {
-  const padding = 4 - (str.length % 4);
-  if (padding !== 4) str += '='.repeat(padding);
-  return Buffer.from(str.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf-8');
-}
-
-function createSignature(header: string, payload: string, secret: string): string {
-  return crypto.createHmac('sha256', secret).update(`${header}.${payload}`).digest('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-}
-
-function parseExpiration(expiresIn: string): number {
-  const match = expiresIn.match(/^(\d+)([smhd])$/);
-  if (!match) return 900;
-  const value = parseInt(match[1]);
-  const unit = match[2];
-  switch (unit) {
-    case 's': return value;
-    case 'm': return value * 60;
-    case 'h': return value * 60 * 60;
-    case 'd': return value * 24 * 60 * 60;
-    default: return 900;
-  }
-}
-
-function timingSafeCompare(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let result = 0;
-  for (let i = 0; i < a.length; i++) result |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return result === 0;
-}
-
-function createJWT(payload: Omit<JWTPayload, 'iat' | 'exp'>, secret: string, expiresIn: string): string {
-  const now = Math.floor(Date.now() / 1000);
-  const exp = now + parseExpiration(expiresIn);
-  const fullPayload = { ...payload, iat: now, exp };
-  const header = { alg: 'HS256', typ: 'JWT' };
-  const encodedHeader = base64UrlEncode(JSON.stringify(header));
-  const encodedPayload = base64UrlEncode(JSON.stringify(fullPayload));
-  const signature = createSignature(encodedHeader, encodedPayload, secret);
-  return `${encodedHeader}.${encodedPayload}.${signature}`;
-}
-
-function verifyJWT(token: string, secret: string): JWTPayload | null {
-  try {
-    const [encodedHeader, encodedPayload, signature] = token.split('.');
-    if (!encodedHeader || !encodedPayload || !signature) return null;
-    const expectedSignature = createSignature(encodedHeader, encodedPayload, secret);
-    if (!timingSafeCompare(signature, expectedSignature)) return null;
-    const payload: JWTPayload = JSON.parse(base64UrlDecode(encodedPayload));
-    const now = Math.floor(Date.now() / 1000);
-    if (payload.exp < now) return null;
-    return payload;
-  } catch (error) {
-    return null;
-  }
-}
-
-function createAccessToken(userId: string, email: string, role: string): string {
-  return createJWT({ userId, email, role, type: 'access' }, JWT_SECRET, ACCESS_TOKEN_EXPIRES_IN);
-}
-
-function createRefreshToken(userId: string, email: string, role: string): string {
-  return createJWT({ userId, email, role, type: 'refresh' }, JWT_SECRET, REFRESH_TOKEN_EXPIRES_IN);
-}
-
-function verifyAccessToken(token: string): JWTPayload | null {
-  const payload = verifyJWT(token, JWT_SECRET);
-  return payload && payload.type === 'access' ? payload : null;
-}
-
-function verifyRefreshToken(token: string): JWTPayload | null {
-  const payload = verifyJWT(token, JWT_SECRET);
-  return payload && payload.type === 'refresh' ? payload : null;
-}
-
-// ============================================
-// TOKEN CLEANING UTILITY (NUEVO - ULTRA ROBUSTO)
-// ============================================
-
-/**
- * Limpieza ultra robusta de tokens para manejar problemas de encoding
- * Remueve comillas, backslashes, espacios y caracteres escapados
- */
-function cleanToken(token: any): string | null {
-  if (!token || typeof token !== 'string') return null;
-  
-  return token
-    .trim()
-    .replace(/^["']+|["']+$/g, '')     // Remover comillas al inicio y final
-    .replace(/\\"/g, '"')               // Remover escapes de comillas
-    .replace(/\\+/g, '')                // Remover backslashes
-    .replace(/\s+/g, '')                // Remover todos los espacios/blancos
-    .trim();
-}
-
-// ============================================
-// AUTH MIDDLEWARE (REUTILIZABLE)
-// ==========================================
-
-/**
- * Middleware de autenticación reutilizable
- * Verifica el JWT y adjunta los datos del usuario al request
- */
-export async function authenticateRequest(
-  request: FastifyRequest,
-  reply: FastifyReply
-): Promise<void> {
-  const authHeader = request.headers.authorization;
-  
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    reply.code(401).send({ 
-      error: 'Unauthorized', 
-      message: 'Token no proporcionado. Usa: Authorization: Bearer <token>' 
-    });
-    return;
-  }
-
-  const token = authHeader.substring(7).trim();
-  
-  if (!token) {
-    reply.code(401).send({ 
-      error: 'Unauthorized', 
-      message: 'Token vacío' 
-    });
-    return;
-  }
-
-  const payload = verifyAccessToken(token);
-  
-  if (!payload) {
-    reply.code(401).send({ 
-      error: 'Unauthorized', 
-      message: 'Token inválido o expirado' 
-    });
-    return;
-  }
-
-  // Adjuntar datos del usuario al request para uso posterior
-  (request as AuthenticatedRequest).user = {
-    userId: payload.userId,
-    email: payload.email,
-    role: payload.role
-  };
-}
-
-/**
- * Middleware opcional: No falla si no hay token, pero lo adjunta si existe
- */
-export async function optionalAuth(
-  request: FastifyRequest,
-  reply: FastifyReply
-): Promise<void> {
-  const authHeader = request.headers.authorization;
-  
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return; // No hay token, pero no es error
-  }
-
-  const token = authHeader.substring(7).trim();
-  const payload = verifyAccessToken(token);
-  
-  if (payload) {
-    (request as AuthenticatedRequest).user = {
-      userId: payload.userId,
-      email: payload.email,
-      role: payload.role
-    };
-  }
-}
-
-/**
- * Middleware de autorización por roles
- * Uso: authorizeRoles('admin', 'moderator')
- */
-export function authorizeRoles(...allowedRoles: string[]) {
-  return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
-    const authRequest = request as AuthenticatedRequest;
-    
-    if (!authRequest.user) {
-      reply.code(401).send({ 
-        error: 'Unauthorized', 
-        message: 'Debes iniciar sesión primero' 
-      });
-      return;
-    }
-
-    if (!allowedRoles.includes(authRequest.user.role)) {
-      reply.code(403).send({ 
-        error: 'Forbidden', 
-        message: `Se requiere rol: ${allowedRoles.join(' o ')}` 
-      });
-      return;
-    }
-  };
-}
-
-// ============================================
-// AUTH ROUTES
-// ============================================
-
-export function registerAuthRoutes(app: App) {
-  console.log('Registering auth routes...');
+export function registerGiftRoutes(app: App) {
+  const requireAuth = app.requireAuth();
 
   /**
-   * POST /api/auth/login
+   * GET /api/gifts
+   * Get all available gifts
+   * Public endpoint
    */
-  app.fastify.post(
-    '/api/auth/login',
+  app.fastify.get(
+    '/api/gifts',
     {
       schema: {
-        description: 'Login user',
-        tags: ['auth'],
+        description: 'Get available gifts',
+        tags: ['gifts'],
+        response: {
+          200: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                id: { type: 'string' },
+                name: { type: 'string' },
+                icon: { type: 'string' },
+                priceCoins: { type: 'number' },
+                valueCoins: { type: 'number' },
+                animationUrl: { type: 'string' },
+              },
+            },
+          },
+        },
+      },
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      app.logger.info({}, 'Fetching gifts list');
+
+      try {
+        const gifts = await app.db
+          .select()
+          .from(schema.gifts)
+          .orderBy(schema.gifts.priceCoins);
+
+        app.logger.info({ count: gifts.length }, 'Gifts fetched');
+
+        return gifts;
+      } catch (error) {
+        app.logger.error({ err: error }, 'Failed to fetch gifts');
+        throw error;
+      }
+    }
+  );
+
+  /**
+   * GET /api/gifts/coin-packages
+   * Get all active coin packages
+   * Public endpoint
+   */
+  app.fastify.get(
+    '/api/gifts/coin-packages',
+    {
+      schema: {
+        description: 'Get coin packages',
+        tags: ['gifts'],
+        response: {
+          200: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                id: { type: 'string' },
+                name: { type: 'string' },
+                coins: { type: 'number' },
+                priceUsd: { type: 'number' },
+              },
+            },
+          },
+        },
+      },
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      app.logger.info({}, 'Fetching coin packages');
+
+      try {
+        const packages = await app.db
+          .select({
+            id: schema.coinPackages.id,
+            name: schema.coinPackages.name,
+            coins: schema.coinPackages.coins,
+            priceUsd: schema.coinPackages.priceUsd,
+          })
+          .from(schema.coinPackages)
+          .where(eq(schema.coinPackages.isActive, true))
+          .orderBy(schema.coinPackages.coins);
+
+        const formattedPackages = packages.map((p) => ({
+          ...p,
+          priceUsd: parseFloat(numericToNumber(p.priceUsd).toFixed(2)),
+        }));
+
+        app.logger.info({ count: formattedPackages.length }, 'Coin packages fetched');
+
+        return formattedPackages;
+      } catch (error) {
+        app.logger.error({ err: error }, 'Failed to fetch coin packages');
+        throw error;
+      }
+    }
+  );
+
+  /**
+   * GET /api/gifts/user-coins
+   * Get current user's coin balance
+   * Requires authentication
+   */
+  app.fastify.get(
+    '/api/gifts/user-coins',
+    {
+      schema: {
+        description: 'Get user coin balance',
+        tags: ['gifts'],
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              balance: { type: 'number' },
+              totalSpent: { type: 'number' },
+              totalEarned: { type: 'number' },
+            },
+          },
+        },
+      },
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const session = await requireAuth(request, reply);
+      if (!session) return;
+
+      // FIX: Cambiado session.user.id por session.user.userId
+      const userId = session.user.userId;
+
+      app.logger.info({ userId }, 'Fetching user coin balance');
+
+      try {
+        let [userCoinRecord] = await app.db
+          .select()
+          .from(schema.userCoins)
+          .where(eq(schema.userCoins.userId, userId));
+
+        // Create record if doesn't exist
+        if (!userCoinRecord) {
+          [userCoinRecord] = await app.db
+            .insert(schema.userCoins)
+            .values({
+              userId,
+              balance: 0,
+              totalSpent: 0,
+              totalEarned: 0,
+            })
+            .returning();
+
+          app.logger.info({ userId }, 'User coins record created');
+        }
+
+        return {
+          balance: userCoinRecord.balance,
+          totalSpent: userCoinRecord.totalSpent,
+          totalEarned: userCoinRecord.totalEarned,
+        };
+      } catch (error) {
+        app.logger.error({ err: error, userId }, 'Failed to fetch user coin balance');
+        throw error;
+      }
+    }
+  );
+
+  /**
+   * POST /api/gifts/send
+   * Send a gift to another user
+   * Requires authentication
+   */
+  app.fastify.post(
+    '/api/gifts/send',
+    {
+      schema: {
+        description: 'Send a gift',
+        tags: ['gifts'],
         body: {
           type: 'object',
-          required: ['email', 'password'],
           properties: {
-            email: { type: 'string', format: 'email' },
-            password: { type: 'string', minLength: 1 },
+            giftId: { type: 'string' },
+            recipientId: { type: 'string' },
+            videoId: { type: 'string' },
           },
+          required: ['giftId', 'recipientId'],
         },
         response: {
           200: {
             type: 'object',
             properties: {
-              accessToken: { type: 'string' },
-              refreshToken: { type: 'string' },
-              user: {
+              success: { type: 'boolean' },
+              newBalance: { type: 'number' },
+              transaction: {
                 type: 'object',
                 properties: {
                   id: { type: 'string' },
-                  email: { type: 'string' },
-                  name: { type: 'string' },
-                  image: { type: 'string' },
+                  giftName: { type: 'string' },
+                  giftIcon: { type: 'string' },
+                  recipientUsername: { type: 'string' },
                 },
               },
             },
@@ -281,580 +226,586 @@ export function registerAuthRoutes(app: App) {
       },
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
+      const session = await requireAuth(request, reply);
+      if (!session) return;
+
+      // FIX: Cambiado session.user.id por session.user.userId
+      const senderId = session.user.userId;
+      const { giftId, recipientId, videoId } = request.body as {
+        giftId: string;
+        recipientId: string;
+        videoId?: string;
+      };
+
+      app.logger.info({ senderId, giftId, recipientId, videoId }, 'Sending gift');
+
       try {
-        const { email, password } = request.body as { email: string; password: string };
+        // Verify gift exists
+        const [gift] = await app.db
+          .select()
+          .from(schema.gifts)
+          .where(eq(schema.gifts.id, giftId));
 
-        if (!isValidEmail(email)) {
-          return reply.code(400).send({ 
-            error: 'Invalid email format',
-            message: 'Please provide a valid email address'
+        if (!gift) {
+          app.logger.warn({ giftId }, 'Gift not found');
+          return reply.code(404).send({ success: false, error: 'Gift not found' });
+        }
+
+        // Verify recipient exists
+        const [recipientUser] = await app.db
+          .select()
+          .from(user)
+          .where(eq(user.id, recipientId));
+
+        if (!recipientUser) {
+          app.logger.warn({ recipientId }, 'Recipient not found');
+          return reply.code(404).send({ success: false, error: 'Recipient not found' });
+        }
+
+        // Prevent self-gifting
+        if (senderId === recipientId) {
+          app.logger.warn({ senderId }, 'Cannot gift to self');
+          return reply.code(400).send({ success: false, error: 'Cannot gift to yourself' });
+        }
+
+        // Get sender's coin balance
+        let [senderCoins] = await app.db
+          .select()
+          .from(schema.userCoins)
+          .where(eq(schema.userCoins.userId, senderId));
+
+        if (!senderCoins) {
+          [senderCoins] = await app.db
+            .insert(schema.userCoins)
+            .values({
+              userId: senderId,
+              balance: 0,
+              totalSpent: 0,
+              totalEarned: 0,
+            })
+            .returning();
+        }
+
+        // Check sufficient coins
+        if (senderCoins.balance < gift.priceCoins) {
+          app.logger.warn(
+            { senderId, required: gift.priceCoins, current: senderCoins.balance },
+            'Insufficient coins'
+          );
+          return reply.code(400).send({
+            success: false,
+            error: 'Insufficient coins',
+            required: gift.priceCoins,
+            current: senderCoins.balance,
           });
         }
 
-        const userRecord = await app.db.query.user.findFirst({
-          where: eq(user.email, email),
-        });
-
-        if (!userRecord) {
-          return reply.code(401).send({ error: 'Invalid credentials' });
-        }
-
-        const isValid = await bcrypt.compare(password, userRecord.password);
-        
-        if (!isValid) {
-          return reply.code(401).send({ error: 'Invalid credentials' });
-        }
-
-        const accessToken = createAccessToken(userRecord.id, userRecord.email, userRecord.role);
-        const refreshTokenString = createRefreshToken(userRecord.id, userRecord.email, userRecord.role);
-
-        const refreshExpiresAt = new Date();
-        refreshExpiresAt.setDate(refreshExpiresAt.getDate() + 7);
-
-        console.log('🔐 LOGIN - Token creado:', {
-          userId: userRecord.id,
-          tokenLength: refreshTokenString.length,
-          tokenPreview: refreshTokenString.substring(0, 50) + '...',
-          expiresAt: refreshExpiresAt
-        });
-
-        await app.db.insert(refreshToken).values({
-          userId: userRecord.id,
-          token: refreshTokenString,
-          expiresAt: refreshExpiresAt,
-        });
-
-        const savedToken = await app.db.query.refreshToken.findFirst({
-          where: eq(refreshToken.token, refreshTokenString),
-        });
-        console.log('💾 LOGIN - Token guardado en BD:', savedToken ? 'SÍ' : 'NO');
-
-        return {
-          accessToken,
-          refreshToken: refreshTokenString,
-          user: {
-            id: userRecord.id,
-            email: userRecord.email,
-            name: userRecord.name,
-            image: userRecord.image,
-          },
-        };
-      } catch (error) {
-        app.logger.error({ err: error }, 'Login error');
-        throw error;
-      }
-    }
-  );
-
-  /**
-   * POST /api/auth/register
-   */
-  app.fastify.post(
-    '/api/auth/register',
-    {
-      schema: {
-        description: 'Register user',
-        tags: ['auth'],
-        body: {
-          type: 'object',
-          required: ['email', 'password', 'name'],
-          properties: {
-            email: { type: 'string', format: 'email' },
-            password: { type: 'string', minLength: 8 },
-            name: { type: 'string', minLength: 1, maxLength: 50 },
-          },
-        },
-      },
-    },
-    async (request: FastifyRequest, reply: FastifyReply) => {
-      try {
-        let { email, password, name } = request.body as any;
-
-        if (!isValidEmail(email)) {
-          return reply.code(400).send({ 
-            error: 'Invalid email format',
-            message: 'Please provide a valid email address (e.g., user@example.com)'
-          });
-        }
-
-        if (!isValidPassword(password)) {
-          return reply.code(400).send({ 
-            error: 'Invalid password',
-            message: 'Password must be at least 8 characters long and contain at least one letter and one number'
-          });
-        }
-
-        if (!isValidLength(name, 2, 50)) {
-          return reply.code(400).send({ 
-            error: 'Invalid name',
-            message: 'Name must be between 2 and 50 characters'
-          });
-        }
-        name = sanitizeString(name.trim());
-
-        email = email.toLowerCase().trim();
-
-        const existing = await app.db.query.user.findFirst({
-          where: eq(user.email, email),
-        });
-
-        if (existing) {
-          return reply.code(400).send({ error: 'User already exists' });
-        }
-
-        const generateUUID = () => {
-          return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-            const r = Math.random() * 16 | 0;
-            const v = c === 'x' ? r : (r & 0x3 | 0x8);
-            return v.toString(16);
-          });
-        };
-
-        const userId = generateUUID();
-
-        const hashedPassword = await bcrypt.hash(password, 10);
-
-        const [newUser] = await app.db
-          .insert(user)
+        // Create transaction
+        const [transaction] = await app.db
+          .insert(schema.giftTransactions)
           .values({
-            id: userId,
-            email,
-            password: hashedPassword,
-            name,
-            emailVerified: false,
-            role: 'user',
-            isBanned: false,
-            createdAt: new Date(),
-            updatedAt: new Date(),
+            senderId,
+            recipientId,
+            giftId,
+            videoId: videoId || null,
+            amountCoins: gift.priceCoins,
           })
           .returning();
 
-        const accessToken = createAccessToken(newUser.id, newUser.email, newUser.role);
-        const refreshTokenString = createRefreshToken(newUser.id, newUser.email, newUser.role);
+        // Deduct from sender
+        await app.db
+          .update(schema.userCoins)
+          .set({
+            balance: sql`${schema.userCoins.balance} - ${gift.priceCoins}`,
+            totalSpent: sql`${schema.userCoins.totalSpent} + ${gift.priceCoins}`,
+            updatedAt: new Date(),
+          })
+          .where(eq(schema.userCoins.userId, senderId));
 
-        const refreshExpiresAt = new Date();
-        refreshExpiresAt.setDate(refreshExpiresAt.getDate() + 7);
+        // Add to recipient
+        let [recipientCoins] = await app.db
+          .select()
+          .from(schema.userCoins)
+          .where(eq(schema.userCoins.userId, recipientId));
 
-        console.log('🔐 REGISTER - Token creado:', {
-          userId: newUser.id,
-          tokenLength: refreshTokenString.length,
-          tokenPreview: refreshTokenString.substring(0, 50) + '...'
-        });
+        if (!recipientCoins) {
+          [recipientCoins] = await app.db
+            .insert(schema.userCoins)
+            .values({
+              userId: recipientId,
+              balance: gift.valueCoins,
+              totalSpent: 0,
+              totalEarned: gift.valueCoins,
+            })
+            .returning();
+        } else {
+          await app.db
+            .update(schema.userCoins)
+            .set({
+              balance: sql`${schema.userCoins.balance} + ${gift.valueCoins}`,
+              totalEarned: sql`${schema.userCoins.totalEarned} + ${gift.valueCoins}`,
+              updatedAt: new Date(),
+            })
+            .where(eq(schema.userCoins.userId, recipientId));
+        }
 
-        await app.db.insert(refreshToken).values({
-          userId: newUser.id,
-          token: refreshTokenString,
-          expiresAt: refreshExpiresAt,
-        });
+        // Create creator earnings record (convert coins to USD: 1 coin = $0.01)
+        const earningsAmount = (gift.valueCoins / 100).toFixed(2);
+        await app.db
+          .insert(schema.creatorEarnings)
+          .values({
+            userId: recipientId,
+            videoId: videoId || null,
+            amount: earningsAmount as any,
+            source: 'gifts',
+          });
+
+        // Create notification
+        await app.db
+          .insert(schema.notifications)
+          .values({
+            userId: recipientId,
+            type: 'gift',
+            actorId: senderId,
+            videoId: videoId || null,
+            isRead: false,
+          });
+
+        app.logger.info(
+          { senderId, recipientId, giftId, transactionId: transaction.id },
+          'Gift sent successfully'
+        );
 
         return {
-          accessToken,
-          refreshToken: refreshTokenString,
-          user: {
-            id: newUser.id,
-            email: newUser.email,
-            name: newUser.name,
+          success: true,
+          newBalance: senderCoins.balance - gift.priceCoins,
+          transaction: {
+            id: transaction.id,
+            giftName: gift.name,
+            giftIcon: gift.icon,
+            recipientUsername: recipientUser.name,
           },
         };
       } catch (error) {
-        app.logger.error({ err: error }, 'Register error');
+        app.logger.error({ err: error, senderId, giftId, recipientId }, 'Failed to send gift');
         throw error;
       }
     }
   );
 
   /**
-   * POST /api/auth/refresh - CON CLEAN TOKEN ROBUSTO
-   */
-  app.fastify.post(
-    '/api/auth/refresh',
-    {
-      schema: {
-        description: 'Refresh access token',
-        tags: ['auth'],
-        body: {
-          type: 'object',
-          required: ['refreshToken'],
-          properties: {
-            refreshToken: { type: 'string' },
-          },
-        },
-      },
-    },
-    async (request: FastifyRequest, reply: FastifyReply) => {
-      try {
-        // Usar cleanToken para manejar cualquier problema de encoding
-        const body = request.body as any;
-        let refreshTokenString = cleanToken(body.refreshToken || body.refresh_token || body.token);
-        
-        if (!refreshTokenString) {
-          console.log('❌ REFRESH - Token no proporcionado o inválido');
-          return reply.code(400).send({ error: 'Refresh token required' });
-        }
-
-        console.log('🔄 REFRESH - Token limpio:', {
-          length: refreshTokenString.length,
-          preview: refreshTokenString.substring(0, 50) + '...',
-          last50: refreshTokenString.substring(refreshTokenString.length - 50)
-        });
-
-        if (refreshTokenString.length < 50) {
-          console.log('❌ REFRESH - Token demasiado corto:', refreshTokenString.length);
-          return reply.code(400).send({ error: 'Invalid refresh token format' });
-        }
-
-        const allActiveTokens = await app.db.query.refreshToken.findMany({
-          where: and(
-            isNull(refreshToken.revokedAt),
-            gt(refreshToken.expiresAt, new Date())
-          ),
-          limit: 10
-        });
-
-        console.log('📊 REFRESH - Tokens activos en BD:', allActiveTokens.length);
-        
-        if (allActiveTokens.length > 0) {
-          console.log('🔍 Comparando con primer token en BD:', {
-            bdLength: allActiveTokens[0].token.length,
-            bdPreview: allActiveTokens[0].token.substring(0, 50) + '...',
-            matchExacto: allActiveTokens[0].token === refreshTokenString
-          });
-        }
-
-        const storedToken = await app.db.query.refreshToken.findFirst({
-          where: and(
-            eq(refreshToken.token, refreshTokenString),
-            isNull(refreshToken.revokedAt),
-            gt(refreshToken.expiresAt, new Date())
-          ),
-        });
-
-        if (!storedToken) {
-          console.log('❌ REFRESH - Token no encontrado en BD');
-          
-          const anyToken = await app.db.query.refreshToken.findFirst({
-            where: eq(refreshToken.token, refreshTokenString),
-          });
-          
-          if (anyToken) {
-            console.log('⚠️ REFRESH - Token existe pero:', {
-              revoked: anyToken.revokedAt ? 'Sí (revocado)' : 'No',
-              expired: anyToken.expiresAt < new Date() ? 'Sí (expirado)' : 'No',
-              expiresAt: anyToken.expiresAt
-            });
-            return reply.code(401).send({ 
-              error: 'Refresh token revoked or expired',
-              details: {
-                revoked: !!anyToken.revokedAt,
-                expired: anyToken.expiresAt < new Date()
-              }
-            });
-          }
-
-          return reply.code(401).send({ 
-            error: 'Refresh token not found',
-            debug: {
-              tokenReceivedLength: refreshTokenString.length,
-              activeTokensInDB: allActiveTokens.length
-            }
-          });
-        }
-
-        console.log('✅ REFRESH - Token encontrado:', {
-          userId: storedToken.userId,
-          createdAt: storedToken.createdAt
-        });
-
-        const userRecord = await app.db.query.user.findFirst({
-          where: eq(user.id, storedToken.userId),
-        });
-
-        if (!userRecord) {
-          console.log('❌ REFRESH - Usuario no encontrado:', storedToken.userId);
-          return reply.code(404).send({ error: 'User not found' });
-        }
-
-        const newAccessToken = createAccessToken(userRecord.id, userRecord.email, userRecord.role);
-
-        console.log('✅ REFRESH - Nuevo access token generado para:', userRecord.email);
-
-        return {
-          accessToken: newAccessToken,
-        };
-      } catch (error) {
-        console.error('💥 REFRESH - Error:', error);
-        app.logger.error({ err: error }, 'Refresh token error');
-        throw error;
-      }
-    }
-  );
-
-  /**
-   * POST /api/auth/logout - CON CLEAN TOKEN ROBUSTO
-   */
-  app.fastify.post(
-    '/api/auth/logout',
-    {
-      schema: {
-        description: 'Logout user and revoke refresh token',
-        tags: ['auth'],
-        body: {
-          type: 'object',
-          required: ['refreshToken'],
-          properties: {
-            refreshToken: { type: 'string' },
-          },
-        },
-      },
-    },
-    async (request: FastifyRequest, reply: FastifyReply) => {
-      try {
-        // Usar cleanToken para manejar cualquier problema de encoding
-        const body = request.body as any;
-        const refreshTokenString = cleanToken(body.refreshToken || body.refresh_token || body.token);
-        
-        if (!refreshTokenString) {
-          console.log('⚠️ LOGOUT - Token no proporcionado o inválido');
-          return { message: 'Logged out successfully' };
-        }
-
-        console.log('👋 LOGOUT - Token limpio:', {
-          length: refreshTokenString.length,
-          preview: refreshTokenString.substring(0, 50)
-        });
-
-        const result = await app.db
-          .update(refreshToken)
-          .set({ revokedAt: new Date() })
-          .where(eq(refreshToken.token, refreshTokenString))
-          .returning();
-
-        console.log('👋 LOGOUT - Tokens revocados:', result.length);
-
-        return { message: 'Logged out successfully' };
-      } catch (error) {
-        app.logger.error({ err: error }, 'Logout error');
-        throw error;
-      }
-    }
-  );
-
-  /**
-   * GET /api/auth/me - CON MIDDLEWARE REUTILIZABLE
+   * GET /api/gifts/transactions
+   * Get gift transaction history
+   * Requires authentication
    */
   app.fastify.get(
-    '/api/auth/me',
+    '/api/gifts/transactions',
     {
-      preHandler: [authenticateRequest],
       schema: {
-        description: 'Get current user profile',
-        tags: ['auth'],
+        description: 'Get gift transactions',
+        tags: ['gifts'],
+        querystring: {
+          type: 'object',
+          properties: {
+            type: { type: 'string', enum: ['sent', 'received'] },
+            limit: { type: 'number', default: 50 },
+            offset: { type: 'number', default: 0 },
+          },
+          required: ['type'],
+        },
         response: {
           200: {
-            type: 'object',
-            properties: {
-              id: { type: 'string' },
-              email: { type: 'string' },
-              name: { type: 'string' },
-              image: { type: 'string' },
-              role: { type: 'string' },
-              emailVerified: { type: 'boolean' },
-              createdAt: { type: 'string' },
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                id: { type: 'string' },
+                giftName: { type: 'string' },
+                giftIcon: { type: 'string' },
+                otherUsername: { type: 'string' },
+                otherAvatar: { type: 'string' },
+                videoId: { type: 'string' },
+                amountCoins: { type: 'number' },
+                createdAt: { type: 'string' },
+              },
             },
           },
         },
       },
     },
-    async (request: AuthenticatedRequest, reply: FastifyReply) => {
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const session = await requireAuth(request, reply);
+      if (!session) return;
+
+      // FIX: Cambiado session.user.id por session.user.userId
+      const userId = session.user.userId;
+      const { type, limit = 50, offset = 0 } = request.query as {
+        type: string;
+        limit?: number;
+        offset?: number;
+      };
+
+      app.logger.info({ userId, type, limit, offset }, 'Fetching gift transactions');
+
       try {
-        const userRecord = await app.db.query.user.findFirst({
-          where: eq(user.id, request.user.userId),
-        });
+        if (type === 'sent') {
+          const transactions = await app.db
+            .select({
+              id: schema.giftTransactions.id,
+              giftName: schema.gifts.name,
+              giftIcon: schema.gifts.icon,
+              otherUsername: user.name,
+              otherAvatar: user.image,
+              videoId: schema.giftTransactions.videoId,
+              amountCoins: schema.giftTransactions.amountCoins,
+              createdAt: schema.giftTransactions.createdAt,
+            })
+            .from(schema.giftTransactions)
+            .innerJoin(schema.gifts, eq(schema.giftTransactions.giftId, schema.gifts.id))
+            .leftJoin(user, eq(schema.giftTransactions.recipientId, user.id))
+            .where(eq(schema.giftTransactions.senderId, userId))
+            .orderBy(desc(schema.giftTransactions.createdAt))
+            .limit(limit)
+            .offset(offset);
 
-        if (!userRecord) {
-          return reply.code(404).send({ error: 'User not found' });
+          app.logger.info({ userId, count: transactions.length }, 'Sent transactions fetched');
+
+          return transactions;
+        } else if (type === 'received') {
+          const transactions = await app.db
+            .select({
+              id: schema.giftTransactions.id,
+              giftName: schema.gifts.name,
+              giftIcon: schema.gifts.icon,
+              otherUsername: user.name,
+              otherAvatar: user.image,
+              videoId: schema.giftTransactions.videoId,
+              amountCoins: schema.giftTransactions.amountCoins,
+              createdAt: schema.giftTransactions.createdAt,
+            })
+            .from(schema.giftTransactions)
+            .innerJoin(schema.gifts, eq(schema.giftTransactions.giftId, schema.gifts.id))
+            .leftJoin(user, eq(schema.giftTransactions.senderId, user.id))
+            .where(eq(schema.giftTransactions.recipientId, userId))
+            .orderBy(desc(schema.giftTransactions.createdAt))
+            .limit(limit)
+            .offset(offset);
+
+          app.logger.info({ userId, count: transactions.length }, 'Received transactions fetched');
+
+          return transactions;
+        } else {
+          return reply.code(400).send({ success: false, error: 'Invalid type parameter' });
         }
-
-        return {
-          id: userRecord.id,
-          email: userRecord.email,
-          name: userRecord.name,
-          image: userRecord.image,
-          role: userRecord.role,
-          emailVerified: userRecord.emailVerified,
-          createdAt: userRecord.createdAt,
-        };
       } catch (error) {
-        app.logger.error({ err: error }, 'Get profile error');
+        app.logger.error({ err: error, userId, type }, 'Failed to fetch gift transactions');
         throw error;
       }
     }
   );
 
   /**
-   * PUT /api/auth/profile - CON MIDDLEWARE REUTILIZABLE
+   * GET /api/gifts/leaderboard/:userId
+   * Get top gifters for a creator
+   * Public endpoint
    */
-  app.fastify.put(
-    '/api/auth/profile',
+  app.fastify.get(
+    '/api/gifts/leaderboard/:userId',
     {
-      preHandler: [authenticateRequest],
       schema: {
-        description: 'Update current user profile',
-        tags: ['auth'],
-        body: {
+        description: 'Get gift leaderboard for creator',
+        tags: ['gifts'],
+        params: {
           type: 'object',
           properties: {
-            name: { type: 'string', minLength: 2, maxLength: 50 },
-            image: { type: 'string' },
+            userId: { type: 'string' },
           },
         },
         response: {
           200: {
-            type: 'object',
-            properties: {
-              id: { type: 'string' },
-              email: { type: 'string' },
-              name: { type: 'string' },
-              image: { type: 'string' },
-              updatedAt: { type: 'string' },
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                username: { type: 'string' },
+                avatar: { type: 'string' },
+                totalCoinsGifted: { type: 'number' },
+                giftCount: { type: 'number' },
+                rank: { type: 'number' },
+              },
             },
           },
         },
       },
     },
-    async (request: AuthenticatedRequest, reply: FastifyReply) => {
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { userId } = request.params as { userId: string };
+
+      app.logger.info({ userId }, 'Fetching gift leaderboard');
+
       try {
-        const { name, image } = request.body as { name?: string; image?: string };
+        // Verify creator exists
+        const [creatorUser] = await app.db
+          .select()
+          .from(user)
+          .where(eq(user.id, userId));
 
-        let sanitizedName: string | undefined;
-        if (name !== undefined) {
-          if (!isValidLength(name, 2, 50)) {
-            return reply.code(400).send({ 
-              error: 'Invalid name',
-              message: 'Name must be between 2 and 50 characters'
-            });
-          }
-          sanitizedName = sanitizeString(name.trim());
+        if (!creatorUser) {
+          app.logger.warn({ userId }, 'Creator not found');
+          return reply.code(404).send({ success: false, error: 'Creator not found' });
         }
 
-        const updateData: any = {
-          updatedAt: new Date(),
-        };
-        
-        if (sanitizedName !== undefined) updateData.name = sanitizedName;
-        if (image !== undefined) updateData.image = image;
+        // Get top gifters
+        const leaderboard = await app.db
+          .select({
+            senderId: schema.giftTransactions.senderId,
+            username: user.name,
+            avatar: user.image,
+            totalCoinsGifted: sum(schema.giftTransactions.amountCoins),
+            giftCount: count(schema.giftTransactions.id),
+          })
+          .from(schema.giftTransactions)
+          .innerJoin(user, eq(schema.giftTransactions.senderId, user.id))
+          .where(eq(schema.giftTransactions.recipientId, userId))
+          .groupBy(schema.giftTransactions.senderId, user.id, user.name, user.image)
+          .orderBy(sql`SUM(${schema.giftTransactions.amountCoins}) DESC`)
+          .limit(10);
 
-        if (Object.keys(updateData).length === 1) {
-          return reply.code(400).send({ 
-            error: 'No data provided',
-            message: 'Please provide name or image to update'
-          });
-        }
+        const formattedLeaderboard = leaderboard.map((entry, index) => ({
+          username: entry.username,
+          avatar: entry.avatar,
+          totalCoinsGifted: numericToNumber(entry.totalCoinsGifted),
+          giftCount: numericToNumber(entry.giftCount),
+          rank: index + 1,
+        }));
 
-        const [updatedUser] = await app.db
-          .update(user)
-          .set(updateData)
-          .where(eq(user.id, request.user.userId))
-          .returning();
+        app.logger.info({ userId, count: formattedLeaderboard.length }, 'Leaderboard fetched');
 
-        if (!updatedUser) {
-          return reply.code(404).send({ error: 'User not found' });
-        }
-
-        return {
-          id: updatedUser.id,
-          email: updatedUser.email,
-          name: updatedUser.name,
-          image: updatedUser.image,
-          updatedAt: updatedUser.updatedAt,
-        };
+        return formattedLeaderboard;
       } catch (error) {
-        app.logger.error({ err: error }, 'Update profile error');
+        app.logger.error({ err: error, userId }, 'Failed to fetch leaderboard');
         throw error;
       }
     }
   );
 
   /**
-   * GET /api/auth/session
-   */
-  app.fastify.get(
-    '/api/auth/session',
-    {
-      schema: {
-        description: 'Get session',
-        tags: ['auth'],
-      },
-    },
-    async () => {
-      return { user: null };
-    }
-  );
-
-  /**
-   * POST /api/auth/debug/tokens - ENDPOINT TEMPORAL DE DEBUG
+   * POST /api/gifts/stripe/create-checkout
+   * Create Stripe checkout session for coin purchase
+   * Requires authentication
    */
   app.fastify.post(
-    '/api/auth/debug/tokens',
+    '/api/gifts/stripe/create-checkout',
     {
       schema: {
-        description: 'Debug endpoint to check tokens (REMOVE IN PRODUCTION)',
-        tags: ['debug'],
+        description: 'Create Stripe checkout session',
+        tags: ['gifts'],
         body: {
           type: 'object',
-          required: ['refreshToken'],
           properties: {
-            refreshToken: { type: 'string' },
+            packageId: { type: 'string' },
+          },
+          required: ['packageId'],
+        },
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              checkoutUrl: { type: 'string' },
+              sessionId: { type: 'string' },
+            },
           },
         },
       },
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
+      const session = await requireAuth(request, reply);
+      if (!session) return;
+
+      // FIX: Cambiado session.user.id por session.user.userId
+      const userId = session.user.userId;
+      const { packageId } = request.body as { packageId: string };
+
+      app.logger.info({ userId, packageId }, 'Creating Stripe checkout session');
+
       try {
-        const body = request.body as any;
-        let refreshTokenString = cleanToken(body.refreshToken || body.refresh_token || body.token);
-        
-        if (!refreshTokenString) {
-          return reply.code(400).send({ error: 'Refresh token required' });
+        // Verify package exists
+        const [coinPackage] = await app.db
+          .select()
+          .from(schema.coinPackages)
+          .where(
+            and(
+              eq(schema.coinPackages.id, packageId),
+              eq(schema.coinPackages.isActive, true)
+            )
+          );
+
+        if (!coinPackage) {
+          app.logger.warn({ packageId }, 'Coin package not found');
+          return reply.code(404).send({ success: false, error: 'Coin package not found' });
         }
 
-        const exactMatch = await app.db.query.refreshToken.findFirst({
-          where: eq(refreshToken.token, refreshTokenString),
-        });
+        // In production, use actual Stripe API
+        // For now, return a mock response
+        const mockSessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-        const lastTokens = await app.db.query.refreshToken.findMany({
-          orderBy: (refreshToken, { desc }) => [desc(refreshToken.createdAt)],
-          limit: 5
-        });
+        // Create stripe transaction record
+        const [stripeTransaction] = await app.db
+          .insert(schema.stripeTransactions)
+          .values({
+            userId,
+            stripeSessionId: mockSessionId,
+            packageId,
+            coinsPurchased: coinPackage.coins,
+            amountUsd: coinPackage.priceUsd,
+            status: 'pending',
+          })
+          .returning();
+
+        app.logger.info(
+          { userId, transactionId: stripeTransaction.id, sessionId: mockSessionId },
+          'Stripe session created'
+        );
+
+        // Mock checkout URL - in production this would be from Stripe
+        const mockCheckoutUrl = `https://checkout.stripe.com/pay/ ${mockSessionId}`;
 
         return {
-          input: {
-            length: refreshTokenString.length,
-            preview: refreshTokenString.substring(0, 50) + '...',
-            hash: crypto.createHash('sha256').update(refreshTokenString).digest('hex').substring(0, 16)
-          },
-          exactMatch: exactMatch ? {
-            found: true,
-            userId: exactMatch.userId,
-            revoked: !!exactMatch.revokedAt,
-            expired: exactMatch.expiresAt < new Date(),
-            expiresAt: exactMatch.expiresAt,
-            createdAt: exactMatch.createdAt
-          } : { found: false },
-          recentTokens: lastTokens.map(t => ({
-            userId: t.userId,
-            length: t.token.length,
-            preview: t.token.substring(0, 50) + '...',
-            revoked: !!t.revokedAt,
-            expired: t.expiresAt < new Date(),
-            createdAt: t.createdAt
-          }))
+          checkoutUrl: mockCheckoutUrl,
+          sessionId: mockSessionId,
         };
       } catch (error) {
-        return reply.code(500).send({ error: 'Debug error', details: error });
+        app.logger.error({ err: error, userId, packageId }, 'Failed to create checkout session');
+        throw error;
       }
     }
   );
 
-  console.log('Auth routes registered successfully');
+  /**
+   * POST /api/gifts/stripe/webhook
+   * Stripe webhook handler for payment completion
+   * Public endpoint (Stripe signature verification required)
+   */
+  app.fastify.post(
+    '/api/gifts/stripe/webhook',
+    {
+      schema: {
+        description: 'Stripe webhook handler',
+        tags: ['gifts'],
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              received: { type: 'boolean' },
+            },
+          },
+        },
+      },
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      app.logger.info({}, 'Received Stripe webhook');
+
+      try {
+        // Note: In production, verify the webhook signature with STRIPE_WEBHOOK_SECRET
+        const body = request.body as any;
+
+        if (body.type === 'checkout.session.completed') {
+          const sessionId = body.data.object.id;
+
+          // Find transaction by session ID
+          const [transaction] = await app.db
+            .select()
+            .from(schema.stripeTransactions)
+            .where(eq(schema.stripeTransactions.stripeSessionId, sessionId));
+
+          if (!transaction) {
+            app.logger.warn({ sessionId }, 'Transaction not found for session');
+            return { received: true };
+          }
+
+          // Update transaction status
+          await app.db
+            .update(schema.stripeTransactions)
+            .set({
+              status: 'completed',
+              stripePaymentIntentId: body.data.object.payment_intent,
+              completedAt: new Date(),
+            })
+            .where(eq(schema.stripeTransactions.id, transaction.id));
+
+          // Add coins to user balance
+          let [userCoins] = await app.db
+            .select()
+            .from(schema.userCoins)
+            .where(eq(schema.userCoins.userId, transaction.userId));
+
+          if (!userCoins) {
+            [userCoins] = await app.db
+              .insert(schema.userCoins)
+              .values({
+                userId: transaction.userId,
+                balance: transaction.coinsPurchased,
+                totalSpent: 0,
+                totalEarned: 0,
+              })
+              .returning();
+          } else {
+            await app.db
+              .update(schema.userCoins)
+              .set({
+                balance: sql`${schema.userCoins.balance} + ${transaction.coinsPurchased}`,
+                updatedAt: new Date(),
+              })
+              .where(eq(schema.userCoins.userId, transaction.userId));
+          }
+
+          app.logger.info(
+            { userId: transaction.userId, coins: transaction.coinsPurchased },
+            'Coins added to user balance'
+          );
+        } else if (body.type === 'charge.refunded') {
+          const paymentIntentId = body.data.object.payment_intent;
+
+          // Find transaction by payment intent
+          const [transaction] = await app.db
+            .select()
+            .from(schema.stripeTransactions)
+            .where(eq(schema.stripeTransactions.stripePaymentIntentId, paymentIntentId));
+
+          if (!transaction) {
+            app.logger.warn({ paymentIntentId }, 'Transaction not found for refund');
+            return { received: true };
+          }
+
+          // Update transaction status
+          await app.db
+            .update(schema.stripeTransactions)
+            .set({ status: 'refunded' })
+            .where(eq(schema.stripeTransactions.id, transaction.id));
+
+          // Deduct coins if transaction was completed
+          if (transaction.status === 'completed') {
+            await app.db
+              .update(schema.userCoins)
+              .set({
+                balance: sql`${schema.userCoins.balance} - ${transaction.coinsPurchased}`,
+                updatedAt: new Date(),
+              })
+              .where(eq(schema.userCoins.userId, transaction.userId));
+
+            app.logger.info(
+              { userId: transaction.userId, coins: transaction.coinsPurchased },
+              'Coins refunded from user balance'
+            );
+          }
+        }
+
+        return { received: true };
+      } catch (error) {
+        app.logger.error({ err: error }, 'Failed to process Stripe webhook');
+        // Return 200 to acknowledge receipt even on error
+        return { received: true };
+      }
+    }
+  );
 }
