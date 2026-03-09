@@ -3,7 +3,7 @@ import type { FastifyRequest, FastifyReply } from 'fastify';
 import { eq } from 'drizzle-orm';
 import { user, session, account, verification, refreshToken } from '../db/auth-schema.js';
 import bcrypt from 'bcrypt';
-import { randomBytes } from 'crypto';
+import { randomBytes, randomUUID } from 'crypto';
 
 // Helper to generate tokens
 function generateToken(): string {
@@ -29,9 +29,10 @@ export function registerAuthRoutes(app: App) {
       // Hash password
       const hashedPassword = await bcrypt.hash(password, 10);
 
-      // Create user
+      // Create user with explicit UUID
       const [newUser] = await db.insert(user).values({
-        email,
+        id: randomUUID(), // ← FIX: Generar UUID manualmente
+        email: email.toLowerCase(),
         password: hashedPassword,
         name,
         emailVerified: false,
@@ -43,6 +44,7 @@ export function registerAuthRoutes(app: App) {
       expiresAt.setDate(expiresAt.getDate() + 7);
 
       await db.insert(session).values({
+        id: randomUUID(), // ← FIX: Generar UUID manualmente
         userId: newUser.id,
         token,
         expiresAt,
@@ -95,6 +97,7 @@ export function registerAuthRoutes(app: App) {
       expiresAt.setDate(expiresAt.getDate() + 7);
 
       await db.insert(session).values({
+        id: randomUUID(), // ← FIX: Generar UUID manualmente
         userId: existingUser.id,
         token,
         expiresAt,
