@@ -49,11 +49,11 @@ const fastify = Fastify({
   logger: true
 });
 
-// DEBUG: Verificar JWT_SECRET al iniciar
-console.log('🔐 JWT_SECRET check:', {
-  hasSecret: !!process.env.JWT_SECRET,
-  secretLength: process.env.JWT_SECRET?.length,
-  secretPreview: process.env.JWT_SECRET ? process.env.JWT_SECRET.substring(0, 10) + '...' : 'NOT SET'
+// DEBUG: Verificar AUTH_SECRET al iniciar (cambiado de JWT_SECRET a AUTH_SECRET)
+console.log('🔐 AUTH_SECRET check:', {
+  hasSecret: !!process.env.AUTH_SECRET,
+  secretLength: process.env.AUTH_SECRET?.length,
+  secretPreview: process.env.AUTH_SECRET ? process.env.AUTH_SECRET.substring(0, 10) + '...' : 'USING FALLBACK'
 });
 
 // Export for route files
@@ -301,17 +301,20 @@ async function start() {
     }
   });
 
-  // JWT setup
+  // JWT setup - CORREGIDO: Usar AUTH_SECRET en lugar de JWT_SECRET
   await fastify.register(jwt, {
-    secret: process.env.JWT_SECRET || 'your-secret-key'
+    secret: process.env.AUTH_SECRET || 'vyxo-auth-secret-key-2026'
   });
 
-  // Auth decorator
+  // Auth decorator - CORREGIDO: Mejorado con logs y manejo de errores
   fastify.decorate("authenticate", async function(request: any, reply: any) {
     try {
       await request.jwtVerify();
+      // DEBUG: Verificar que el user está disponible
+      console.log('✅ Authenticate decorator - User:', request.user);
     } catch (err) {
-      reply.send(err);
+      console.error('❌ Authenticate decorator - Error:', err);
+      reply.code(401).send({ error: 'Unauthorized' });
     }
   });
 

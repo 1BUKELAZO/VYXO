@@ -1,4 +1,4 @@
-// app/(tabs)/(home)/index.tsx - FEED PRINCIPAL CON FIX DE ICONOS Y VIDEO ZOOM
+// app/(tabs)/(home)/index.tsx - CON HOOK DE BRILLO Y FILTRO OPTIMIZADO
 
 import {
   View,
@@ -40,6 +40,8 @@ import { useFeedAlgorithm, Video, FeedItem, AdItem } from '@/hooks/useFeedAlgori
 import { useLiveStream, LiveStream } from '@/hooks/useLiveStream';
 import AdCard from '@/components/AdCard';
 import { useAds } from '@/hooks/useAds';
+// 🆕 IMPORTAR HOOK DE BRILLO
+import { useScreenBrightness } from '@/hooks/useScreenBrightness';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -131,6 +133,9 @@ const VideoItem = ({ video, isActive, onView }: VideoItemProps) => {
   const tapTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const viewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isPlayingRef = useRef(true);
+
+  // 🆕 ACTIVAR HOOK DE BRILLO CUANDO EL VIDEO ESTÁ ACTIVO
+  useScreenBrightness(`video-${video.id}`);
 
   const useMuxPlayer = (!!video.muxPlaybackId && video.status === 'ready') || !!video.masterPlaylistUrl;
   const videoSource = video.masterPlaylistUrl ? video.masterPlaylistUrl : (video.muxPlaybackId || video.videoUrl);
@@ -376,52 +381,67 @@ const VideoItem = ({ video, isActive, onView }: VideoItemProps) => {
   return (
     <View style={styles.videoContainer}>
       <Pressable onPress={handleVideoPress} style={styles.videoPressable}>
-        <View style={styles.videoWrapper} pointerEvents="none">
+        {/* Video wrapper SIN fondo negro, SIN opacidad */}
+        <View style={styles.cleanVideoWrapper} pointerEvents="none">
           {useMuxPlayer ? (
-            video.masterPlaylistUrl ? (
-              <MuxPlayer
-                ref={muxPlayerRef}
-                src={video.masterPlaylistUrl}
-                streamType="on-demand"
-                autoPlay={isActive && isPlaying}
-                loop
-                muted={false}
-                poster={previewUrl}
-                style={{ width: '100%', height: '100%', objectFit: 'contain' }}
-              />
-            ) : (
-              <MuxPlayer
-                ref={muxPlayerRef}
-                playbackId={video.muxPlaybackId}
-                streamType="on-demand"
-                autoPlay={isActive && isPlaying}
-                loop
-                muted={false}
-                poster={previewUrl}
-                style={{ width: '100%', height: '100%', objectFit: 'contain' }}
-              />
-            )
+            <MuxPlayer
+              ref={muxPlayerRef}
+              src={video.masterPlaylistUrl || undefined}
+              playbackId={!video.masterPlaylistUrl ? video.muxPlaybackId : undefined}
+              streamType="on-demand"
+              autoPlay={isActive && isPlaying}
+              loop
+              muted={false}
+              poster={previewUrl}
+              thumbnailTime={0}
+              preferPlayback="native"
+              style={{ 
+                width: '100%', 
+                height: '100%', 
+                objectFit: 'contain',
+                // 🆕 FILTRO OPTIMIZADO: Menos agresivo porque el hook de brillo hace el trabajo pesado
+                filter: 'brightness(1.03) saturate(1.05)',
+              }}
+            />
           ) : (
-            <VideoView player={player} style={styles.video} contentFit="contain" nativeControls={false} />
+            <VideoView 
+              player={player} 
+              style={styles.cleanVideo} 
+              contentFit="contain"
+              nativeControls={false}
+            />
           )}
         </View>
         
+        {/* Overlays completamente transparentes */}
         {!isPlaying && (
-          <View style={styles.pauseOverlay} pointerEvents="none">
-            <IconSymbol ios_icon_name="play.fill" android_material_icon_name="play-arrow" size={64} color="rgba(255, 255, 255, 0.8)" />
+          <View style={styles.transparentOverlay} pointerEvents="none">
+            <View style={styles.playButton}>
+              <IconSymbol 
+                ios_icon_name="play.fill" 
+                android_material_icon_name="play-arrow" 
+                size={32} 
+                color="#FFFFFF"
+              />
+            </View>
           </View>
         )}
         
         {showLikeAnimation && (
-          <View style={styles.likeAnimationOverlay} pointerEvents="none">
-            <IconSymbol ios_icon_name="heart.fill" android_material_icon_name="favorite" size={100} color={colors.like} />
+          <View style={styles.transparentOverlay} pointerEvents="none">
+            <IconSymbol 
+              ios_icon_name="heart.fill" 
+              android_material_icon_name="favorite" 
+              size={100} 
+              color={colors.like} 
+            />
           </View>
         )}
         
         {video.status === 'processing' && (
-          <View style={styles.processingOverlay} pointerEvents="none">
+          <View style={styles.lightProcessingOverlay} pointerEvents="none">
             <ActivityIndicator size="large" color={colors.purple} />
-            <Text style={styles.processingText}>Processing video...</Text>
+            <Text style={styles.processingText}>Processing...</Text>
           </View>
         )}
       </Pressable>
@@ -701,8 +721,20 @@ export default function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.dark },
-  liveStreamsBanner: { position: 'absolute', top: 60, left: 0, right: 0, zIndex: 10, backgroundColor: 'rgba(0, 0, 0, 0.5)', paddingVertical: 12 },
+  container: { 
+    flex: 1, 
+    backgroundColor: '#000000',
+  },
+  
+  liveStreamsBanner: { 
+    position: 'absolute', 
+    top: 60, 
+    left: 0, 
+    right: 0, 
+    zIndex: 10, 
+    backgroundColor: 'rgba(0, 0, 0, 0.5)', 
+    paddingVertical: 12 
+  },
   liveStreamsScroll: { paddingHorizontal: 16, gap: 12 },
   liveStreamCard: { width: 140, marginRight: 12 },
   liveStreamThumbnail: { width: 140, height: 200, backgroundColor: colors.card, borderRadius: 12, justifyContent: 'center', alignItems: 'center', position: 'relative', overflow: 'hidden' },
@@ -716,13 +748,62 @@ const styles = StyleSheet.create({
   liveStreamText: { flex: 1 },
   liveStreamUsername: { color: colors.text, fontSize: 12, fontWeight: '600' },
   liveStreamTitle: { color: colors.textSecondary, fontSize: 11, marginTop: 2 },
-  videoContainer: { width: SCREEN_WIDTH, height: SCREEN_HEIGHT, position: 'relative' },
-  videoPressable: { width: SCREEN_WIDTH, height: SCREEN_HEIGHT, position: 'absolute', top: 0, left: 0, zIndex: 1 },
-  videoWrapper: { width: '100%', height: '100%' },
-  video: { width: '100%', height: '100%' },
-  pauseOverlay: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0, 0, 0, 0.3)', zIndex: 2 },
-  likeAnimationOverlay: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0, 0, 0, 0.2)', zIndex: 3 },
-  processingOverlay: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0, 0, 0, 0.7)', zIndex: 4 },
+  
+  videoContainer: { 
+    width: SCREEN_WIDTH, 
+    height: SCREEN_HEIGHT, 
+    position: 'relative',
+    backgroundColor: '#000000',
+  },
+  
+  videoPressable: { 
+    width: SCREEN_WIDTH, 
+    height: SCREEN_HEIGHT, 
+    position: 'absolute', 
+    top: 0, 
+    left: 0, 
+    zIndex: 1,
+    backgroundColor: 'transparent',
+  },
+
+  cleanVideoWrapper: {
+    width: '100%',
+    height: '100%',
+    backgroundColor: 'transparent',
+    overflow: 'hidden',
+  },
+
+  cleanVideo: {
+    width: '100%',
+    height: '100%',
+    backgroundColor: 'transparent',
+  },
+
+  transparentOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'transparent',
+    zIndex: 2,
+  },
+
+  playButton: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  lightProcessingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    zIndex: 4,
+  },
+
   processingText: { color: colors.text, fontSize: 16, fontWeight: '600', marginTop: 12 },
   leftContainer: { position: 'absolute', left: 16, bottom: 100, maxWidth: SCREEN_WIDTH - 120, zIndex: 10 },
   userInfo: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
