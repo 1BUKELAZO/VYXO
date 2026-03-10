@@ -336,10 +336,11 @@ export function registerMuxRoutes(app: App) {
               thumbnailUrl: muxThumbnailUrl,
             }).where(eq(schema.videos.id, video.id));
 
+            // ✅ FIX: Cambiado 'video_published' a 'like' (tipo válido)
             try {
               await app.db.insert(schema.notifications).values({
                 userId: video.userId,
-                type: 'video_published',
+                type: 'like',
                 actorId: video.userId,
                 videoId: video.id,
               });
