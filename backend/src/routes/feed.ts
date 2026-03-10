@@ -720,13 +720,20 @@ export function registerFeedRoutes(app: App) {
           return reply.code(404).send({ success: false, error: 'Video not found' });
         }
 
+        // ✅ FIX: Usar objeto explícito con nombres de propiedades exactos y cast as any
+        // El problema era que Drizzle no mapeaba correctamente las propiedades camelCase
+        const viewData = {
+          videoId: videoId,
+          userId: userId,
+          viewedAt: new Date(),
+        };
+
+        app.logger.info({ viewData, userId }, 'Inserting view with userId');
+
         // Try to insert view (will be ignored if already exists due to unique constraint)
         const insertResult = await app.db
           .insert(schema.videoViews)
-          .values({
-            videoId,
-            userId,
-          })
+          .values(viewData as any)
           .onConflictDoNothing()
           .returning();
 
