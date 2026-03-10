@@ -1,5 +1,6 @@
 import * as SecureStore from 'expo-secure-store';
 
+// ✅ FIX 1: Eliminar espacio al final
 const API_URL = 'https://vyxo-backend.onrender.com/api';
 
 // Token keys
@@ -17,10 +18,19 @@ interface User {
 }
 
 // Guardar tokens
-export async function saveTokens(accessToken: string, refreshToken: string): Promise<void> {
+export async function saveTokens(accessToken: string, refreshToken?: string): Promise<void> {
   try {
+    // ✅ FIX 2: Verificar que accessToken existe antes de guardar
+    if (!accessToken) {
+      throw new Error('No access token provided');
+    }
     await SecureStore.setItemAsync(ACCESS_TOKEN_KEY, accessToken);
-    await SecureStore.setItemAsync(REFRESH_TOKEN_KEY, refreshToken);
+    
+    // refreshToken es opcional (nuestro backend no lo envía aún)
+    if (refreshToken) {
+      await SecureStore.setItemAsync(REFRESH_TOKEN_KEY, refreshToken);
+    }
+    
     console.log('✅ Tokens guardados');
   } catch (error) {
     console.error('❌ Error guardando tokens:', error);
@@ -53,7 +63,7 @@ export async function clearTokens(): Promise<void> {
 }
 
 // Login
-export async function login(email: string, password: string): Promise<{ user: User; accessToken: string; refreshToken: string }> {
+export async function login(email: string, password: string): Promise<{ user: User; accessToken: string; refreshToken?: string }> {
   console.log('🔐 Login - calling:', `${API_URL}/auth/login`);
   const response = await fetch(`${API_URL}/auth/login`, {
     method: 'POST',
@@ -62,18 +72,32 @@ export async function login(email: string, password: string): Promise<{ user: Us
   });
 
   const data = await response.json();
+  console.log('🔐 Login - response:', data);
   console.log('🔐 Login - response status:', response.status);
 
   if (!response.ok) {
     throw new Error(data.message || data.error || 'Login failed');
   }
 
-  await saveTokens(data.accessToken, data.refreshToken);
-  return data;
+  // ✅ FIX 3: Usar data.token en lugar de data.accessToken
+  const accessToken = data.token || data.accessToken;
+  const refreshToken = data.refreshToken; // puede ser undefined
+
+  if (!accessToken) {
+    throw new Error('No token received from server');
+  }
+
+  await saveTokens(accessToken, refreshToken);
+  
+  return {
+    user: data.user,
+    accessToken,
+    refreshToken,
+  };
 }
 
 // Register
-export async function register(name: string, email: string, password: string): Promise<{ user: User; accessToken: string; refreshToken: string }> {
+export async function register(name: string, email: string, password: string): Promise<{ user: User; accessToken: string; refreshToken?: string }> {
   console.log('📝 Register - calling:', `${API_URL}/auth/register`);
   const response = await fetch(`${API_URL}/auth/register`, {
     method: 'POST',
@@ -82,14 +106,28 @@ export async function register(name: string, email: string, password: string): P
   });
 
   const data = await response.json();
+  console.log('📝 Register - response:', data);
   console.log('📝 Register - response status:', response.status);
 
   if (!response.ok) {
     throw new Error(data.message || data.error || 'Registration failed');
   }
 
-  await saveTokens(data.accessToken, data.refreshToken);
-  return data;
+  // ✅ FIX 4: Usar data.token en lugar de data.accessToken
+  const accessToken = data.token || data.accessToken;
+  const refreshToken = data.refreshToken; // puede ser undefined
+
+  if (!accessToken) {
+    throw new Error('No token received from server');
+  }
+
+  await saveTokens(accessToken, refreshToken);
+  
+  return {
+    user: data.user,
+    accessToken,
+    refreshToken,
+  };
 }
 
 // Get Profile
@@ -169,9 +207,16 @@ export async function refreshAccessToken(): Promise<string> {
     throw new Error(data.message || data.error || 'Session expired');
   }
 
-  await SecureStore.setItemAsync(ACCESS_TOKEN_KEY, data.accessToken);
+  // ✅ FIX 5: Usar data.token si existe, sino data.accessToken
+  const newToken = data.token || data.accessToken;
+  
+  if (!newToken) {
+    throw new Error('No token received from refresh');
+  }
+
+  await SecureStore.setItemAsync(ACCESS_TOKEN_KEY, newToken);
   console.log('🔄 refreshAccessToken - new token saved');
-  return data.accessToken;
+  return newToken;
 }
 
 // Logout
